@@ -1,0 +1,9 @@
+.git
+.env
+*.session
+*.session-journal
+downloads/
+__pycache__/
+*.pyc
+.gitignore
+README.md

@@ -1,0 +1,46 @@
+"""Configuration loaded from environment variables."""
+
+import os
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+
+try:
+    API_ID = int(os.environ.get("API_ID", "0"))
+except ValueError:
+    API_ID = 0
+
+API_HASH = os.environ.get("API_HASH", "")
+
+DOWNLOAD_DIR = os.environ.get("DOWNLOAD_DIR", "/tmp/ytdl_downloads")
+
+try:
+    MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", str(2 * 1024 * 1024 * 1024)))
+except ValueError:
+    MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
+
+try:
+    MAX_CONCURRENT_DOWNLOADS = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "1"))
+except ValueError:
+    MAX_CONCURRENT_DOWNLOADS = 1
+
+try:
+    DOWNLOAD_TIMEOUT = int(os.environ.get("DOWNLOAD_TIMEOUT", "600"))
+except ValueError:
+    DOWNLOAD_TIMEOUT = 600
+
+try:
+    UPLOAD_TIMEOUT = int(os.environ.get("UPLOAD_TIMEOUT", "1800"))
+except ValueError:
+    UPLOAD_TIMEOUT = 1800
+
+HEALTH_CHECK_PORT = int(os.environ.get("PORT", os.environ.get("HEALTH_CHECK_PORT", "8000")))
+
+SESSION_NAME = os.environ.get("SESSION_NAME", "bot_session")
+
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
