@@ -171,9 +171,10 @@ async def _process_download(event, download_id, media_type, quality):
 
     _active_counts[user_id] = _active_counts.get(user_id, 0) + 1
     session_id = uuid.uuid4().hex[:8]
-    status = event.message
+    status = None
 
     try:
+        status = await event.get_message()
         loop = asyncio.get_running_loop()
         tracker = DownloadProgressTracker(status, loop)
 
@@ -224,16 +225,20 @@ async def _process_download(event, download_id, media_type, quality):
         await status.edit("Done! Your file has been sent.")
 
     except FloodWaitError as exc:
-        await status.edit(
-            f"Telegram asked us to wait {exc.seconds}s. Please try again later."
-        )
+        if status:
+            await status.edit(
+                f"Telegram asked us to wait {exc.seconds}s. Please try again later."
+            )
     except asyncio.TimeoutError:
-        await status.edit("The operation timed out. Please try again.")
+        if status:
+            await status.edit("The operation timed out. Please try again.")
     except FileNotFoundError:
-        await status.edit("Download failed — no output file was produced.")
+        if status:
+            await status.edit("Download failed — no output file was produced.")
     except Exception:
         logger.exception("Download/upload failed")
-        await status.edit("Something went wrong. Please try again later.")
+        if status:
+            await status.edit("Something went wrong. Please try again later.")
     finally:
         _active_counts[user_id] = max(0, _active_counts.get(user_id, 1) - 1)
         if _active_counts.get(user_id, 0) == 0:
