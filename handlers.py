@@ -8,7 +8,7 @@ import time
 import logging
 from datetime import datetime, timezone
 
-from telethon import events, Button
+from telethon import events, Button, utils as telethon_utils
 from telethon.errors import FloodWaitError
 from telethon.tl.types import DocumentAttributeVideo, DocumentAttributeAudio
 
@@ -673,7 +673,7 @@ async def _process_single_media(
         if cached and cached.get("telegram_file_id"):
             file_id = cached["telegram_file_id"]
             if send_status:
-                await status_msg.edit(t("status_done", lang))
+                await status_msg.edit(t("status_done", lang) + " ⚡ (تحویل آنی از کش تلگرام)")
 
             rec_id = await asyncio.to_thread(
                 db.add_download,
@@ -687,16 +687,19 @@ async def _process_single_media(
             )
 
             caption = f"🎬 {title}" if media_type == "video" else f"🎧 {title}"
-            sent_msg = await client.send_file(
-                event.chat_id,
-                file_id,
-                caption=caption,
-                buttons=file_action_keyboard(rec_id, lang),
-            )
-
-            # Forward to download log channel (Section 8)
-            await _forward_to_download_log(client, sent_msg, title, event.sender)
-            return True
+            try:
+                sent_msg = await client.send_file(
+                    event.chat_id,
+                    file_id,
+                    caption=caption,
+                    buttons=file_action_keyboard(rec_id, lang),
+                    supports_streaming=True,
+                )
+                # Forward to download log channel (Section 8)
+                await _forward_to_download_log(client, sent_msg, title, event.sender)
+                return True
+            except Exception as cache_err:
+                logger.warning("Cache send failed (%s), proceeding to fresh download", cache_err)
 
     # 2. Cache miss: download from YouTube
     session_id = f"{user_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
@@ -778,6 +781,7 @@ async def _process_single_media(
                     duration=int(raw_duration or 0),
                     title=title or "Audio Track",
                     performer=uploader or "YouTube",
+                    voice=False,  # Explicitly standard music track for Telegram music player
                 )
             )
 
@@ -789,20 +793,26 @@ async def _process_single_media(
                 thumb=thumb_path,
                 attributes=attributes,
                 progress_callback=upload_tracker.callback,
-                supports_streaming=True if media_type == "video" else False,
+                supports_streaming=True,  # Enables instant progressive streaming for both audio & video
             ),
             timeout=UPLOAD_TIMEOUT,
         )
 
         # 4. Save to Cache & Record in DB
-        telegram_file_id = sent_msg.media
+        telegram_file_id = None
+        if sent_msg and sent_msg.media:
+            try:
+                telegram_file_id = telethon_utils.pack_bot_file_id(sent_msg.media)
+            except Exception:
+                telegram_file_id = str(getattr(getattr(sent_msg, "file", None), "id", "")) or None
+
         if video_id and telegram_file_id:
             await asyncio.to_thread(
                 db.set_cache,
                 video_id=video_id,
                 quality=quality,
                 media_type=media_type,
-                telegram_file_id=str(telegram_file_id),
+                telegram_file_id=telegram_file_id,
                 file_size=file_size,
             )
 

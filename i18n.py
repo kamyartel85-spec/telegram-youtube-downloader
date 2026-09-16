@@ -221,38 +221,40 @@ _STRINGS: dict[str, dict[str, str]] = {
     # ── Video info & download caption ─────────────────────────────────
     "video_info_caption": {
         "fa": (
-            "👀 اطلاعات ویدیو به شرح زیر می‌باشد:\n"
-            "📹 Title: {title}\n"
-            "🕰 Duration: {duration}\n"
-            "📺 Channel: {uploader}\n"
-            "👁 View: {views}\n"
-            "🖨 Comments: {comments}\n"
-            "📅 Release date: {upload_date}"
+            "👀 <b>مشخصات و اطلاعات ویدیو:</b>\n\n"
+            "🎬 <b>عنوان:</b> {title}\n"
+            "⏱ <b>مدت زمان:</b> {duration}\n"
+            "📢 <b>کانال:</b> {uploader}\n"
+            "👁 <b>تعداد بازدید:</b> {views}\n"
+            "💬 <b>نظرات:</b> {comments}\n"
+            "📅 <b>تاریخ انتشار:</b> {upload_date}\n\n"
+            "👇 کیفیت یا فرمت دلخواه را انتخاب کنید:"
         ),
         "en": (
-            "👀 Video details:\n"
-            "📹 Title: {title}\n"
-            "🕰 Duration: {duration}\n"
-            "📺 Channel: {uploader}\n"
-            "👁 View: {views}\n"
-            "🖨 Comments: {comments}\n"
-            "📅 Release date: {upload_date}"
+            "👀 <b>Video Details:</b>\n\n"
+            "🎬 <b>Title:</b> {title}\n"
+            "⏱ <b>Duration:</b> {duration}\n"
+            "📢 <b>Channel:</b> {uploader}\n"
+            "👁 <b>Views:</b> {views}\n"
+            "💬 <b>Comments:</b> {comments}\n"
+            "📅 <b>Release Date:</b> {upload_date}\n\n"
+            "👇 Select your preferred format/quality:"
         ),
         "ru": (
             "👀 Информация о видео:\n"
-            "📹 Title: {title}\n"
-            "🕰 Duration: {duration}\n"
-            "📺 Channel: {uploader}\n"
-            "👁 View: {views}\n"
-            "🖨 Comments: {comments}\n"
-            "📅 Release date: {upload_date}"
+            "📹 Название: {title}\n"
+            "🕰 Длительность: {duration}\n"
+            "📺 Канал: {uploader}\n"
+            "👁 Просмотры: {views}\n"
+            "🖨 Комментарии: {comments}\n"
+            "📅 Дата: {upload_date}"
         ),
     },
     "playlist_info_caption": {
         "fa": (
-            "📑 اطلاعات پلی‌لیست:\n"
-            "📌 Title: {title}\n"
-            "🔢 Total videos: {count}\n\n"
+            "📑 <b>اطلاعات پلی‌لیست یوتیوب:</b>\n\n"
+            "📌 <b>عنوان:</b> {title}\n"
+            "🔢 <b>تعداد کل ویدیوها:</b> {count}\n\n"
             "⚠️ حداکثر {max_items} ویدیو به ترتیب دانلود خواهند شد."
         ),
         "en": (

@@ -12,4 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Persistent storage mount for SQLite database and state
+VOLUME ["/app/data"]
+
 CMD ["python", "main.py"]

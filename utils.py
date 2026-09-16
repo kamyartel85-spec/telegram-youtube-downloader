@@ -57,10 +57,11 @@ def format_duration(seconds):
 
 
 def cleanup_files(download_dir, session_id):
-    """Delete every file whose name starts with *session_id*."""
-    pattern = os.path.join(download_dir, f"{session_id}.*")
+    """Delete every file whose name starts with *session_id* (including thumbs and temp parts)."""
+    pattern = os.path.join(download_dir, f"{session_id}*")
     for filepath in glob.glob(pattern):
         try:
-            os.remove(filepath)
+            if os.path.isfile(filepath):
+                os.remove(filepath)
         except OSError:
             pass

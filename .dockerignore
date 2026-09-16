@@ -1,5 +1,5 @@
 .git
-.env
+.env*
 *.session
 *.session-journal
 downloads/
@@ -7,3 +7,5 @@ __pycache__/
 *.pyc
 .gitignore
 README.md
+web/
+node_modules/

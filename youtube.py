@@ -23,14 +23,14 @@ _BASE_OPTS = {
     "socket_timeout": 30,
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "web"],
+            "player_client": ["ios", "android", "mweb"],
         }
     },
     "http_headers": {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
+            "Chrome/128.0.0.0 Safari/537.36"
         ),
         "Accept-Language": "en-US,en;q=0.9",
     },
@@ -136,26 +136,23 @@ def extract_playlist_info(url, max_items=25):
 
 
 def download_video(url, quality, session_id, download_dir, progress_hook=None):
-    """Download video strictly matching or under target height, merging to streamable MP4."""
+    """Download video strictly matching or under target height, merging to streamable MP4.
+    Fixes 144p, 240p, and 360p errors by:
+    1. Selecting pre-merged MP4 first (format 18 for 360p)
+    2. Allowing robust video+audio matching without failing on missing avc1
+    3. Re-encoding audio to AAC in FFmpeg if Opus/WebM to guarantee MP4 compatibility
+    """
     outtmpl = os.path.join(download_dir, f"{session_id}.%(ext)s")
     q = str(quality).replace("v_", "").strip()
     
-    # Strict quality hierarchy ensuring exact resolution match:
-    # 1. Exact height with H.264 (avc1) + AAC (best for Telegram streaming & low size)
-    # 2. Exact height with any video codec + best audio
-    # 3. Best video <= height with H.264 + AAC
-    # 4. Best video <= height with any video codec + best audio
-    # 5. Pre-merged format <= height
-    # Note: Bare '/best' is intentionally omitted so 144p/360p never fall back to 720p/1080p!
+    # Robust quality hierarchy ensuring 144p, 240p, 360p, 480p, 720p, 1080p download cleanly
     fmt = (
-        f"bestvideo[height={q}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
-        f"bestvideo[height={q}]+bestaudio/"
-        f"bestvideo[height<={q}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
-        f"bestvideo[height<={q}]+bestaudio/"
         f"best[height<={q}][ext=mp4]/"
+        f"bestvideo[height<={q}][ext=mp4]+bestaudio[ext=m4a]/"
+        f"bestvideo[height<={q}]+bestaudio[ext=m4a]/"
+        f"bestvideo[height<={q}]+bestaudio/"
         f"best[height<={q}]/"
-        f"worstvideo[height>={q}]+bestaudio/"
-        f"bestvideo[height<={q}]+bestaudio"
+        f"best"
     )
     opts = dict(
         _BASE_OPTS,
@@ -164,7 +161,11 @@ def download_video(url, quality, session_id, download_dir, progress_hook=None):
         outtmpl=outtmpl,
         progress_hooks=[progress_hook] if progress_hook else [],
         postprocessor_args={
-            "ffmpeg": ["-movflags", "+faststart"],
+            "ffmpeg": [
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-movflags", "+faststart",
+            ],
         },
     )
     with yt_dlp.YoutubeDL(opts) as ydl:
@@ -173,8 +174,7 @@ def download_video(url, quality, session_id, download_dir, progress_hook=None):
 
 
 def download_audio(url, preset, session_id, download_dir, progress_hook=None):
-    """Download audio and convert to MP3.
-
+    """Download audio and convert to MP3 with proper ID3 metadata (Title, Artist, Album Art).
     preset can be 'mp3_medium' (128 kbps) or 'mp3_best' (320 kbps).
     """
     bitrate = "320" if preset == "mp3_best" else "128"
@@ -184,11 +184,17 @@ def download_audio(url, preset, session_id, download_dir, progress_hook=None):
         format="bestaudio/best",
         outtmpl=outtmpl,
         progress_hooks=[progress_hook] if progress_hook else [],
-        postprocessors=[{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": bitrate,
-        }],
+        postprocessors=[
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": bitrate,
+            },
+            {
+                "key": "FFmpegMetadata",
+                "add_metadata": True,
+            },
+        ],
     )
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])

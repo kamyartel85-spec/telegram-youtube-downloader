@@ -45,7 +45,8 @@ SESSION_NAME = os.environ.get("SESSION_NAME", "bot_session")
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 
-DB_PATH = os.environ.get("DB_PATH", "/tmp/ytdl_bot/bot.db")
+# Persistent database path (prevents data reset on restarts/updates)
+DB_PATH = os.environ.get("DB_PATH", os.path.join(os.getcwd(), "data", "bot.db"))
 
 def _parse_id(val: str) -> int:
     clean = val.strip().strip('"').strip("'").lstrip("@")
