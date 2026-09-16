@@ -295,6 +295,19 @@ def set_cache(video_id, quality, media_type, telegram_file_id, file_size=None):
         conn.close()
 
 
+def delete_cache(video_id, quality, media_type):
+    """Delete a specific cache record."""
+    conn = _connect()
+    try:
+        conn.execute(
+            "DELETE FROM cache WHERE video_id = ? AND quality = ? AND media_type = ?",
+            (video_id, quality, media_type),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def clear_cache():
     """Delete every row in the cache table."""
     conn = _connect()

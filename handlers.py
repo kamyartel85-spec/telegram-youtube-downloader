@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from telethon import events, Button, utils as telethon_utils
 from telethon.errors import FloodWaitError
-from telethon.tl.types import DocumentAttributeVideo, DocumentAttributeAudio
+from telethon.tl.types import DocumentAttributeVideo, DocumentAttributeAudio, InputDocument
 
 from config import (
     DOWNLOAD_DIR,
@@ -27,6 +27,8 @@ from utils import (
     is_playlist_url,
     format_size,
     format_duration,
+    format_duration_persian,
+    format_system_status,
     cleanup_files,
 )
 from youtube import (
@@ -246,6 +248,15 @@ def register_handlers(client):
             t("welcome", lang),
             buttons=main_menu_keyboard(lang),
         )
+
+    # ------------------------------------------------------------------
+    # /status (Real-time system health and resource metrics)
+    # ------------------------------------------------------------------
+    @client.on(events.NewMessage(pattern=r"^/status\b"))
+    async def handle_status_command(event):
+        active = sum(_active_user_downloads.values())
+        status_text = format_system_status(active_downloads=active)
+        await event.respond(status_text, parse_mode="html")
 
     # ------------------------------------------------------------------
     # Language change callback
@@ -476,11 +487,15 @@ def register_handlers(client):
                 "lang": lang,
             }
 
+            dur_display = info["duration"]
+            if info.get("duration_persian") and lang == "fa":
+                dur_display = f"{info['duration']} ({info['duration_persian']})"
+
             caption = t(
                 "video_info_caption",
                 lang,
                 title=info["title"],
-                duration=info["duration"],
+                duration=dur_display,
                 uploader=info["uploader"],
                 views=info["view_count"],
                 comments=info["comment_count"],
@@ -493,11 +508,13 @@ def register_handlers(client):
                     event.chat_id,
                     info["thumbnail"],
                     caption=caption,
+                    parse_mode="html",
                     buttons=quality_and_format_keyboard(dl_id, info.get("format_sizes"), lang),
                 )
             else:
                 await event.respond(
                     caption,
+                    parse_mode="html",
                     buttons=quality_and_format_keyboard(dl_id, info.get("format_sizes"), lang),
                 )
         except Exception as exc:
@@ -644,6 +661,34 @@ def register_handlers(client):
         await event.delete()
 
 
+def _build_media_caption(title, media_type, quality, file_size, raw_duration, uploader, bot_username=None):
+    """Build a polished, 100% Persian delivery caption for downloaded media."""
+    tag = f"\n\n🤖 @{bot_username}" if bot_username else ""
+    size_str = format_size(file_size) if file_size else "استاندارد"
+    dur_str = format_duration(raw_duration) if raw_duration else "نامشخص"
+    up_str = uploader or "یوتیوب (YouTube)"
+
+    if media_type == "video":
+        return (
+            f"🎬 <b>{title}</b>\n\n"
+            f"🎥 <b>کیفیت:</b> {quality}p\n"
+            f"💾 <b>حجم:</b> {size_str}\n"
+            f"⏱ <b>مدت زمان:</b> {dur_str}\n"
+            f"📢 <b>کانال:</b> {up_str}"
+            f"{tag}"
+        )
+    else:
+        q_label = "320 kbps (حداکثر کیفیت)" if quality in ("a_best", "320") else "128 kbps (کیفیت استاندارد)"
+        return (
+            f"🎧 <b>{title}</b>\n\n"
+            f"🎵 <b>کیفیت:</b> {q_label}\n"
+            f"💾 <b>حجم:</b> {size_str}\n"
+            f"⏱ <b>مدت زمان:</b> {dur_str}\n"
+            f"🎙 <b>هنرمند / کانال:</b> {up_str}"
+            f"{tag}"
+        )
+
+
 # ----------------------------------------------------------------------
 # Single Media Download & Upload Workflow
 # ----------------------------------------------------------------------
@@ -667,39 +712,87 @@ async def _process_single_media(
     media_type = "audio" if is_audio else "video"
     quality = choice.replace("v_", "") if not is_audio else choice
 
+    bot_username = getattr(client, "_bot_username", None)
+    if not bot_username:
+        try:
+            me = await client.get_me()
+            bot_username = me.username or ""
+            client._bot_username = bot_username
+        except Exception:
+            bot_username = ""
+
     # 1. Check Cache (Section 6.1)
     if video_id:
         cached = await asyncio.to_thread(db.get_cache, video_id, quality, media_type)
         if cached and cached.get("telegram_file_id"):
             file_id = cached["telegram_file_id"]
             if send_status:
-                await status_msg.edit(t("status_done", lang) + " ⚡ (تحویل آنی از کش تلگرام)")
+                await status_msg.edit("⚡ در حال بازیابی و ارسال از آرشیو تلگرام...")
 
-            rec_id = await asyncio.to_thread(
-                db.add_download,
-                user_id=user_id,
-                url=url,
+            sent_msg = None
+            cached_caption = _build_media_caption(
                 title=title,
                 media_type=media_type,
                 quality=quality,
                 file_size=cached.get("file_size"),
-                status="success",
+                raw_duration=raw_duration,
+                uploader=uploader,
+                bot_username=bot_username,
             )
 
-            caption = f"🎬 {title}" if media_type == "video" else f"🎧 {title}"
             try:
-                sent_msg = await client.send_file(
-                    event.chat_id,
-                    file_id,
-                    caption=caption,
-                    buttons=file_action_keyboard(rec_id, lang),
-                    supports_streaming=True,
-                )
-                # Forward to download log channel (Section 8)
-                await _forward_to_download_log(client, sent_msg, title, event.sender)
-                return True
+                if file_id.startswith("doc:"):
+                    parts = file_id.split(":")
+                    if len(parts) >= 4:
+                        doc = InputDocument(
+                            id=int(parts[1]),
+                            access_hash=int(parts[2]),
+                            file_reference=bytes.fromhex(parts[3]),
+                        )
+                        sent_msg = await client.send_file(
+                            event.chat_id,
+                            doc,
+                            caption=cached_caption,
+                            parse_mode="html",
+                            supports_streaming=True,
+                        )
+                else:
+                    sent_msg = await client.send_file(
+                        event.chat_id,
+                        file_id,
+                        caption=cached_caption,
+                        parse_mode="html",
+                        supports_streaming=True,
+                    )
+
+                if sent_msg:
+                    rec_id = await asyncio.to_thread(
+                        db.add_download,
+                        user_id=user_id,
+                        url=url,
+                        title=title,
+                        media_type=media_type,
+                        quality=quality,
+                        file_size=cached.get("file_size"),
+                        status="success",
+                    )
+                    try:
+                        await sent_msg.edit(buttons=file_action_keyboard(rec_id, lang))
+                    except Exception:
+                        pass
+
+                    if send_status:
+                        await status_msg.edit(t("status_done", lang) + " ⚡ (تحویل فوری از آرشیو)")
+
+                    # Forward to download log channel (Section 8)
+                    await _forward_to_download_log(client, sent_msg, title, event.sender)
+                    return True
+
             except Exception as cache_err:
-                logger.warning("Cache send failed (%s), proceeding to fresh download", cache_err)
+                logger.warning("Cache send failed (%s), invalidating cache and falling back to fresh download", cache_err)
+                await asyncio.to_thread(db.delete_cache, video_id, quality, media_type)
+                if send_status:
+                    await status_msg.edit(t("status_downloading", lang))
 
     # 2. Cache miss: download from YouTube
     session_id = f"{user_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
@@ -750,7 +843,15 @@ async def _process_single_media(
             await status_msg.edit(t("status_uploading", lang))
 
         upload_tracker = SimpleUploadTracker(status_msg, lang=lang)
-        caption = f"🎬 {title}" if media_type == "video" else f"🎧 {title}"
+        caption = _build_media_caption(
+            title=title,
+            media_type=media_type,
+            quality=quality,
+            file_size=file_size,
+            raw_duration=raw_duration,
+            uploader=uploader,
+            bot_username=bot_username,
+        )
 
         # Prepare thumbnail to fix black/white blank previews in Telegram
         thumb_path = None
@@ -790,6 +891,7 @@ async def _process_single_media(
                 event.chat_id,
                 file_path,
                 caption=caption,
+                parse_mode="html",
                 thumb=thumb_path,
                 attributes=attributes,
                 progress_callback=upload_tracker.callback,
@@ -800,11 +902,16 @@ async def _process_single_media(
 
         # 4. Save to Cache & Record in DB
         telegram_file_id = None
-        if sent_msg and sent_msg.media:
-            try:
-                telegram_file_id = telethon_utils.pack_bot_file_id(sent_msg.media)
-            except Exception:
-                telegram_file_id = str(getattr(getattr(sent_msg, "file", None), "id", "")) or None
+        if sent_msg and getattr(sent_msg, "media", None):
+            media = sent_msg.media
+            doc = getattr(media, "document", None)
+            if doc and hasattr(doc, "id") and hasattr(doc, "access_hash") and hasattr(doc, "file_reference"):
+                telegram_file_id = f"doc:{doc.id}:{doc.access_hash}:{doc.file_reference.hex()}"
+            else:
+                try:
+                    telegram_file_id = telethon_utils.pack_bot_file_id(media)
+                except Exception:
+                    telegram_file_id = str(getattr(getattr(sent_msg, "file", None), "id", "")) or None
 
         if video_id and telegram_file_id:
             await asyncio.to_thread(
