@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Persistent storage mount for SQLite database and state
-VOLUME ["/app/data"]
+# Ensure storage directories exist (for persistent DB, mount a Railway Volume to /app/data in Railway service settings)
+RUN mkdir -p /app/data /tmp/ytdl_downloads
 
 CMD ["python", "main.py"]
