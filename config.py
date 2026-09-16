@@ -44,3 +44,10 @@ HEALTH_CHECK_PORT = int(os.environ.get("PORT", os.environ.get("HEALTH_CHECK_PORT
 SESSION_NAME = os.environ.get("SESSION_NAME", "bot_session")
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+
+DB_PATH = os.environ.get("DB_PATH", "/tmp/ytdl_bot/bot.db")
+
+try:
+    OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
+except ValueError:
+    OWNER_ID = 0

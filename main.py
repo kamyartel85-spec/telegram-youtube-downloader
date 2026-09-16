@@ -17,6 +17,7 @@ from config import (
     LOG_LEVEL,
 )
 from handlers import register_handlers
+import db
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -61,6 +62,8 @@ async def main():
         sys.exit(1)
 
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+    db.initialize_database()
 
     client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
     register_handlers(client)
