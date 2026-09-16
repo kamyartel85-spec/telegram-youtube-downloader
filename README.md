@@ -1,135 +1,102 @@
-# YouTube Downloader Telegram Bot
+# YouTube Downloader Telegram Bot with Complete Admin Panel & SQLite
 
-A production-ready Telegram bot that downloads YouTube videos and audio using
-**yt-dlp** and sends them via **Telethon (MTProto)**, which supports files far
-larger than the standard 50 MB Bot API limit.
+A production-ready Telegram bot that downloads YouTube videos and audio playlists using
+**yt-dlp** and delivers them via **Telethon (MTProto)**, bypassing the standard 50 MB Bot API limit (up to 2 GB).
 
-## Features
+Includes a complete in-bot Telegram Admin Panel with reply-keyboards, SQLite storage, fast Telegram-file caching, forced channel join, multi-language support (FA / EN / RU), referral system, rate limiting, and error logging.
 
-- `/start` welcome message and `/help` usage guide
-- Accepts YouTube URLs (`watch`, `youtu.be`, `shorts`, `embed`)
-- Choose **Video** or **Audio** via inline buttons
-- Video quality options: 360p, 480p, 720p, 1080p (MP4 when possible)
-- Audio extracted to MP3 192 kbps via FFmpeg
-- Large file support via MTProto upload (up to 2 GB)
-- Live download progress (percentage, size, speed, ETA)
-- Live upload progress
-- Automatic cleanup of temporary files
-- Per-user concurrent-download limiting
-- Graceful error handling (private videos, age-restriction, timeouts, FloodWait, etc.)
-- Health-check HTTP server for Railway
-- No secrets hardcoded — everything via environment variables
+## Core Features
 
-## Prerequisites
+- **Multi-Language Support (i18n):** Persian (فارسی), English, and Russian (Русский).
+- **Interactive Onboarding:**
+  - Forced Channel Join verification (configurable from admin panel).
+  - Language selection dialog.
+  - Welcoming onboarding flow and rich reply keyboard.
+- **Main Menu (Reply Keyboard):**
+  - 🔍 **YouTube Search / Link Input**
+  - 👤 **My Account:** Real-time statistics (user ID, total downloads, downloads today, remaining quota).
+  - 🚀 **Free Traffic:** Referral link generator (`https://t.me/BOT?start=ref_<id>`) granting bonus downloads.
+  - ☎️ **Support:** Dynamic support username contact.
+  - 🌐 **Change Language:** Instant switch between FA, EN, and RU.
+  - 🍿 **Download Guide:** Comprehensive walkthrough on copying and downloading links.
+  - 📢 **Information Channel:** Direct channel link.
+- **Rich Media Extraction & Formats:**
+  - Thumbnail preview with title, duration, channel, views, comments, and release date.
+  - Formats: MP3 Medium (128k), MP3 Best (320k), and video resolutions (144p, 240p, 360p, 480p, 720p, 1080p) with approximate file sizes.
+  - Sequential Playlist download & delivery with progress status.
+- **Fast Telegram File Caching:** Instant delivery for previously downloaded media via Telegram `file_id`.
+- **Download Quotas & Limits:** Daily limits, custom user overrides, and referral bonuses.
+- **Channels Integration:** Automatic forwarding of completed media to Download Log channel and unexpected errors to Error Log channel.
+- **Failure Recovery & Problem Reporting:** Under every file, users can click `⚠️ گزارش مشکل` or retry interrupted downloads.
+- **Rate Limiting:** Protects against flooding and spam (default: 5 requests/min).
+- **Maintenance Mode:** Instant global maintenance switch for user-facing maintenance.
+- **Full In-Bot Admin Panel (`/admin`):**
+  - 📊 **Bot Analytics:** Total users, active users today/month, total traffic, and download metrics.
+  - 👥 **User Management:** Search user, ban/unban, adjust custom limits, grant bonus downloads, export CSV.
+  - 📢 **Targeted Broadcast:** Broadcast message to users active within the last N months.
+  - ⚙️ **Bot Settings:** Toggle forced join, set daily limits, edit referral rewards, channels, and logs.
+  - 💬 **Live Text Customization:** Edit and override bot text strings in any language live from Telegram.
+  - 🗂 **Cache Management:** View cache size and clear cache.
+  - 🧾 **Error Logs:** View recent system error logs.
+  - 👮 **Admin Roles:** Manage admin users (`owner`, `full`, `viewer`).
+  - 🔧 **Maintenance Toggle:** Turn maintenance mode on/off.
 
-- Python 3.12+
-- FFmpeg (included in the Docker image)
-- A Telegram bot token, API ID, and API hash
+---
 
-### Getting Telegram credentials
+## Project Structure
 
-1. Go to <https://my.telegram.org> → **API Development Tools**
-2. Create an application to get your **API ID** and **API Hash**.
-3. Talk to [@BotFather](https://t.me/BotFather) on Telegram, send `/newbot`,
-   and copy the **Bot Token**.
+```
+├── main.py             # Entry point: logging, health-check server, startup
+├── config.py           # Configuration loaded from environment variables
+├── db.py               # SQLite layer: users, downloads, cache, settings, admins, errors
+├── i18n.py             # Translations bundle (FA, EN, RU) & dynamic database overrides
+├── keyboards.py        # Reply and inline keyboards for user menus & admin panel
+├── handlers.py         # Main user workflows, links, callbacks, caching & download flows
+├── admin_handlers.py   # Admin commands, reply keyboard navigation, and settings
+├── youtube.py          # yt-dlp wrapper (info, playlist extraction, format sizing, downloading)
+├── progress.py         # Alternating friendly status messages (no cluttered percentages)
+├── utils.py            # URL validation, formatting, duration, and file cleanup
+├── requirements.txt    # Python dependencies
+├── Dockerfile          # Production Docker container with FFmpeg
+├── railway.json        # Railway deployment configuration
+└── .env.example        # Environment variables documentation
+```
 
-## Local development
+---
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `BOT_TOKEN` | Yes | — | Telegram Bot token from @BotFather |
+| `API_ID` | Yes | — | Telegram API ID from my.telegram.org |
+| `API_HASH` | Yes | — | Telegram API Hash from my.telegram.org |
+| `OWNER_ID` | Yes/Recommended | `0` | Telegram numeric user ID of owner (auto-seeded with owner role) |
+| `DB_PATH` | No | `/tmp/ytdl_bot/bot.db` | Path to SQLite database file |
+| `DOWNLOAD_DIR` | No | `/tmp/ytdl_downloads` | Temporary download directory |
+| `MAX_FILE_SIZE` | No | `2147483648` (2 GB) | Maximum file size allowed for upload |
+| `MAX_PLAYLIST_ITEMS` | No | `25` | Max playlist videos processed per request |
+| `RATE_LIMIT_PER_MINUTE` | No | `5` | Max messages/requests allowed per user per minute |
+| `DEFAULT_DAILY_LIMIT` | No | `10` | Default daily downloads limit per user |
+| `DEFAULT_REFERRAL_BONUS` | No | `3` | Default bonus downloads per successful referral |
+| `DOWNLOAD_LOG_CHANNEL_ID` | No | `""` | Telegram Channel ID to forward completed media to |
+| `ERROR_LOG_CHANNEL_ID` | No | `""` | Telegram Channel ID to forward error logs to |
+| `HEALTH_CHECK_PORT` | No | `8000` | HTTP health-check port for deployment |
+| `SESSION_NAME` | No | `bot_session` | Telethon session name |
+| `LOG_LEVEL` | No | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+
+---
+
+## Quick Start (Local & Container)
 
 ```bash
-# 1. Clone and install dependencies
+# 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Make sure FFmpeg is installed
-#    macOS:  brew install ffmpeg
-#    Ubuntu: sudo apt install ffmpeg
-
-# 3. Create your .env file
+# 2. Configure environment
 cp .env.example .env
-# Edit .env and fill in BOT_TOKEN, API_ID, API_HASH
+# Fill in BOT_TOKEN, API_ID, API_HASH, OWNER_ID
 
-# 4. Run the bot
+# 3. Start bot
 python main.py
 ```
-
-## Deploy on Railway
-
-1. **Push this project to a GitHub repository.**
-
-2. Go to [Railway](https://railway.app) and click **New Project → Deploy from
-   GitHub repo**. Select your repository.
-
-3. Railway will detect the `Dockerfile` automatically and build the image
-   (FFmpeg is installed inside).
-
-4. Go to the **Variables** tab and add:
-   | Variable     | Value                  |
-   |--------------|------------------------|
-   | `BOT_TOKEN`  | your bot token         |
-   | `API_ID`     | your API ID (numbers)  |
-   | `API_HASH`   | your API hash          |
-
-   Optional variables (`DOWNLOAD_DIR`, `MAX_FILE_SIZE`, etc.) can be added
-   but have sensible defaults.
-
-5. Click **Deploy**. The bot will start automatically with `python main.py`.
-
-6. Check the **Logs** tab to confirm the bot started. You should see:
-   ```
-   Bot started as @YourBotUsername
-   ```
-
-7. Open Telegram, find your bot, send `/start`, then send a YouTube URL.
-
-## Environment variables
-
-| Variable                  | Required | Default            | Description                         |
-|---------------------------|----------|--------------------|-------------------------------------|
-| `BOT_TOKEN`               | Yes      | —                  | Telegram bot token from BotFather   |
-| `API_ID`                  | Yes      | —                  | Telegram API ID from my.telegram.org|
-| `API_HASH`                | Yes      | —                  | Telegram API hash                   |
-| `DOWNLOAD_DIR`            | No       | `/tmp/ytdl_downloads` | Temp download directory          |
-| `MAX_FILE_SIZE`           | No       | `2147483648` (2 GB)| Max upload size in bytes             |
-| `MAX_CONCURRENT_DOWNLOADS`| No       | `1`                | Per-user concurrent downloads        |
-| `DOWNLOAD_TIMEOUT`        | No       | `600`              | Download timeout in seconds          |
-| `UPLOAD_TIMEOUT`          | No       | `1800`             | Upload timeout in seconds            |
-| `HEALTH_CHECK_PORT`       | No       | `8000`             | Health-check HTTP port               |
-| `SESSION_NAME`            | No       | `bot_session`      | Telethon session file name           |
-| `LOG_LEVEL`               | No       | `INFO`             | Logging verbosity                    |
-
-## How it works
-
-1. User sends a YouTube URL → bot validates it and fetches video info.
-2. Bot shows the title, channel, duration, and **Video / Audio** buttons.
-3. For video, the user picks a quality (360p–1080p).
-4. The bot downloads via yt-dlp (FFmpeg merges streams when needed).
-5. Progress is shown live by editing a single message (no spam).
-6. The file is uploaded via Telethon's MTProto `send_file`, bypassing the
-   50 MB Bot API limit.
-7. The temporary file is deleted immediately after sending.
-
-## Project structure
-
-```
-├── main.py          # Entry point: logging, health server, bot startup
-├── config.py        # Environment variable loading
-├── handlers.py      # Telegram event handlers (commands, URLs, callbacks)
-├── youtube.py       # yt-dlp wrapper (info extraction, download)
-├── progress.py      # Download & upload progress trackers
-├── utils.py         # URL validation, formatting, file cleanup
-├── requirements.txt # Python dependencies
-├── Dockerfile       # Docker image with FFmpeg
-├── railway.json     # Railway deployment config
-├── .env.example     # Example environment variables
-├── .gitignore       # Ignores .env, sessions, downloads, cache
-└── .dockerignore    # Excludes non-essential files from Docker build
-```
-
-## Notes
-
-- Only public YouTube videos are supported. Private, age-restricted, or
-  removed videos will produce a friendly error message.
-- The bot uses a Telethon session file (`bot_session.session`) to persist
-  its auth key. On Railway this file is ephemeral and is recreated on each
-  deploy — this is normal and harmless.
-- Files are sent via MTProto, not the HTTP Bot API, so the 50 MB limit does
-  not apply. The practical limit is 2 GB (Telegram's MTProto cap for bots).

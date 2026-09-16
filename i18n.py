@@ -11,7 +11,6 @@ from typing import Any
 SUPPORTED_LANGS = ("fa", "en", "ru")
 DEFAULT_LANG = "fa"
 
-# Language display names for the language-picker buttons
 LANG_LABELS = {
     "fa": "🇮🇷 فارسی",
     "en": "🇬🇧 English",
@@ -31,19 +30,58 @@ MENU_KEYS = [
 
 # ── Translations ───────────────────────────────────────────────────────
 _STRINGS: dict[str, dict[str, str]] = {
-    # ── Language selection ────────────────────────────────────────────
-    "select_language": {
-        "fa": "لطفاً زبان خود را انتخاب کنید",
-        "en": "Please select your language",
-        "ru": "Пожалуйста, выберите язык",
+    # ── Force Join ────────────────────────────────────────────────────
+    "force_join_prompt": {
+        "fa": (
+            "📢 برای ادامه استفاده از ربات، لطفاً در کانال‌های زیر عضو شوید.\n\n"
+            "📢 To continue using the bot, please join the channels below."
+        ),
+        "en": "📢 To continue using the bot, please join the channels below.",
+        "ru": "📢 Чтобы продолжить использование бота, пожалуйста, подпишитесь на каналы ниже.",
     },
-    "welcome": {
-        "fa": "خوش آمدید! من یک ربات دانلود از یوتیوب هستم. لینک ویدیو را بفرستید تا آن را برایتان دانلود کنم.",
-        "en": "Welcome! I'm a YouTube downloader bot. Send me a video link and I'll download it for you.",
-        "ru": "Добро пожаловать! Я бот для скачивания с YouTube. Отправьте ссылку на видео, и я скачаю его для вас.",
+    "btn_joined": {
+        "fa": "عضو شدم ✅",
+        "en": "Joined ✅",
+        "ru": "Подписался ✅",
+    },
+    "force_join_not_yet": {
+        "fa": "❌ شما هنوز در تمام کانال‌ها عضو نشده‌اید! لطفاً ابتدا عضو شده و سپس دکمه زیر را بزنید.",
+        "en": "❌ You have not joined all required channels yet! Please join and retry.",
+        "ru": "❌ Вы еще не подписались на все необходимые каналы! Пожалуйста, подпишитесь и попробуйте снова.",
     },
 
-    # ── Main menu ─────────────────────────────────────────────────────
+    # ── Language selection ────────────────────────────────────────────
+    "select_language": {
+        "fa": "لطفاً زبان مورد نظر خود را انتخاب کنید:",
+        "en": "Please select your language:",
+        "ru": "Пожалуйста, выберите язык:",
+    },
+    "lang_changed": {
+        "fa": "✅ زبان شما به فارسی تغییر یافت",
+        "en": "✅ Your language has been set to English",
+        "ru": "✅ Ваш язык изменен на Русский",
+    },
+
+    # ── Welcome ───────────────────────────────────────────────────────
+    "welcome": {
+        "fa": (
+            "🌹 سلام خوش اومدی\n"
+            "➕ با من ویدیوهای یوتیوب رو به صورت تصویری و صوتی دانلود کن.\n\n"
+            "🔸 برای شروع و دریافت کمک، از دکمه‌های پایین استفاده کن و دانلود از یوتیوب رو آغاز کن:"
+        ),
+        "en": (
+            "🌹 Welcome!\n"
+            "➕ Download YouTube videos with me in high-quality video and audio formats.\n\n"
+            "🔸 To get started and explore features, use the menu buttons below:"
+        ),
+        "ru": (
+            "🌹 Добро пожаловать!\n"
+            "➕ Скачивайте видео с YouTube в видео и аудио форматах с высоким качеством.\n\n"
+            "🔸 Чтобы начать, используйте кнопки меню ниже:"
+        ),
+    },
+
+    # ── Main menu buttons ─────────────────────────────────────────────
     "btn_search": {
         "fa": "🔍 جست‌وجو در یوتیوب",
         "en": "🔍 Search YouTube",
@@ -80,242 +118,250 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "📢 Канал новостей",
     },
 
-    # ── Search ────────────────────────────────────────────────────────
+    # ── Menu responses ────────────────────────────────────────────────
     "search_prompt": {
-        "fa": "لینک ویدیوی یوتیوب را بفرستید تا آن را برایتان دانلود کنم.",
-        "en": "Send me a YouTube video link and I'll download it for you.",
-        "ru": "Отправьте ссылку на видео YouTube, и я скачаю его для вас.",
-    },
-
-    # ── Account ───────────────────────────────────────────────────────
-    "account_title": {
-        "fa": "👤 حساب من",
-        "en": "👤 My Account",
-        "ru": "👤 Мой аккаунт",
-    },
-    "account_user_id": {
-        "fa": "آیدی تلگرام",
-        "en": "Telegram ID",
-        "ru": "Telegram ID",
-    },
-    "account_username": {
-        "fa": "نام کاربری",
-        "en": "Username",
-        "ru": "Имя пользователя",
-    },
-    "account_total_downloads": {
-        "fa": "کل دانلودها",
-        "en": "Total downloads",
-        "ru": "Всего загрузок",
-    },
-    "account_today_downloads": {
-        "fa": "دانلودهای امروز",
-        "en": "Today's downloads",
-        "ru": "Загрузки сегодня",
-    },
-    "account_daily_limit": {
-        "fa": "سقف روزانه",
-        "en": "Daily limit",
-        "ru": "Дневной лимит",
-    },
-    "account_unlimited": {
-        "fa": "نامحدود",
-        "en": "Unlimited",
-        "ru": "Безлимитно",
-    },
-    "account_not_set": {
-        "fa": "تنظیم نشده",
-        "en": "Not configured",
-        "ru": "Не настроено",
-    },
-    "account_none": {
-        "fa": "ندارد",
-        "en": "None",
-        "ru": "Нет",
-    },
-
-    # ── Free traffic ──────────────────────────────────────────────────
-    "free_traffic_placeholder": {
-        "fa": "بزودی این بخش فعال خواهد شد. فعلاً در حال توسعه است.",
-        "en": "This feature is coming soon. Currently under development.",
-        "ru": "Эта функция скоро появится. В данный момент в разработке.",
-    },
-
-    # ── Support ───────────────────────────────────────────────────────
-    "support_text": {
-        "fa": "برای پشتیبانی به آیدی زیر پیام دهید: {support_id}",
-        "en": "For support, please message: {support_id}",
-        "ru": "Для поддержки напишите: {support_id}",
-    },
-    "support_not_set": {
-        "fa": "اطلاعات پشتیبانی در حال حاضر تنظیم نشده است.",
-        "en": "Support is not configured at the moment.",
-        "ru": "Поддержка в данный момент не настроена.",
-    },
-
-    # ── Change language ───────────────────────────────────────────────
-    "lang_changed": {
-        "fa": "زبان تغییر کرد. ✅",
-        "en": "Language changed. ✅",
-        "ru": "Язы изменён. ✅",
-    },
-
-    # ── Guide ─────────────────────────────────────────────────────────
-    "guide_text": {
         "fa": (
-            "🍿 راهنمای دانلود از یوتیوب\n\n"
-            "۱. وارد اپلیکیشن یا سایت یوتیوب شوید.\n"
-            "۲. ویدیوی مورد نظر را پیدا کنید.\n"
-            "۳. روی دکمه «Share» یا «اشتراک‌گذاری» بزنید.\n"
-            "۴. گزینه «Copy link» یا «کپی لینک» را انتخاب کنید.\n"
-            "۵. لینک کپی شده را در اینجا بفرستید.\n"
-            "۶. فرمت (ویدیو یا صدا) و کیفیت را انتخاب کنید.\n"
-            "۷. منتظر بمانید تا فایل دانلود و ارسال شود."
+            "🔎 جستجوی سریع ویدیو در یوتیوب\n\n"
+            "کافیه لینک ویدیو رو کپی کنی و برای ربات بفرستی تا با هر کیفیتی خواستی به صورت فایل تلگرامی تحویل بگیری"
         ),
         "en": (
-            "🍿 YouTube Download Guide\n\n"
-            "1. Open the YouTube app or website.\n"
-            "2. Find the video you want.\n"
-            "3. Tap the \"Share\" button.\n"
-            "4. Select \"Copy link\".\n"
-            "5. Paste the link here in this chat.\n"
-            "6. Choose format (Video or Audio) and quality.\n"
-            "7. Wait for the file to be downloaded and sent."
+            "🔎 Quick YouTube Search\n\n"
+            "Just copy and paste any YouTube link here to receive it as a Telegram file in your desired quality."
         ),
         "ru": (
-            "🍿 Руководство по скачиванию с YouTube\n\n"
-            "1. Откройте приложение или сайт YouTube.\n"
-            "2. Найдите нужное видео.\n"
-            "3. Нажмите кнопку «Поделиться».\n"
-            "4. Выберите «Копировать ссылку».\n"
-            "5. Вставьте ссылку сюда в чат.\n"
-            "6. Выберите формат (видео или аудио) и качество.\n"
-            "7. Дождитесь загрузки и отправки файла."
+            "🔎 Быстрый поиск YouTube\n\n"
+            "Просто отправьте ссылку на видео YouTube сюда, чтобы скачать его в нужном качестве."
+        ),
+    },
+    "account_text": {
+        "fa": (
+            "🆔 آیدی: {user_id}\n"
+            "📥 کل دانلودها: {total_downloads}\n"
+            "📊 دانلود امروز: {today_downloads}\n"
+            "♻️ دانلود باقی‌مانده: {remaining_downloads}"
+        ),
+        "en": (
+            "🆔 ID: {user_id}\n"
+            "📥 Total downloads: {total_downloads}\n"
+            "📊 Today's downloads: {today_downloads}\n"
+            "♻️ Remaining downloads: {remaining_downloads}"
+        ),
+        "ru": (
+            "🆔 ID: {user_id}\n"
+            "📥 Всего загрузок: {total_downloads}\n"
+            "📊 Загрузок сегодня: {today_downloads}\n"
+            "♻️ Осталось загрузок: {remaining_downloads}"
+        ),
+    },
+    "free_traffic_text": {
+        "fa": (
+            "سلام دوست عزیز! 🎉\n\n"
+            "با دعوت از دوستانت به ربات ما، {bonus_count} دانلود رایگان هدیه بگیر! 🚀🎁\n\n"
+            "فقط کافیه دوستانت روی لینک زیر کلیک کنن و به ربات بپیوندن تا این هدیه ویژه به حسابت اضافه بشه! 😍\n\n"
+            "🔗 لینک دعوت:\n"
+            "👉 {referral_link}"
+        ),
+        "en": (
+            "Hello friend! 🎉\n\n"
+            "Invite your friends to our bot and earn {bonus_count} free bonus downloads! 🚀🎁\n\n"
+            "Just share your referral link with them:\n\n"
+            "🔗 Invite link:\n"
+            "👉 {referral_link}"
+        ),
+        "ru": (
+            "Привет, друг! 🎉\n\n"
+            "Приглашай друзей и получай {bonus_count} бонусных загрузок! 🚀🎁\n\n"
+            "🔗 Ваша ссылка для приглашения:\n"
+            "👉 {referral_link}"
+        ),
+    },
+    "support_text": {
+        "fa": "آیدی پشتیبانی جهت برقراری ارتباط: {support_id}",
+        "en": "Support contact ID: {support_id}",
+        "ru": "Контакты поддержки: {support_id}",
+    },
+    "channel_text": {
+        "fa": "📢 کانال اطلاع‌رسانی:\n{channel_link}",
+        "en": "📢 Information Channel:\n{channel_link}",
+        "ru": "📢 Канал новостей:\n{channel_link}",
+    },
+    "guide_text": {
+        "fa": (
+            "📥 آموزش دانلود از یوتیوب با من!\n"
+            "🚀 فقط کافیه لینک ویدیوی یوتیوب رو برام بفرستی، بعدش خودت انتخاب می‌کنی که با چه کیفیتی دانلود بشه! 🎬⬇️\n\n"
+            "🔹 چطور لینک ویدیو رو کپی کنی؟\n"
+            "1️⃣ وارد یوتیوب (YouTube) شو.\n"
+            "2️⃣ ویدیوی موردنظرت رو باز کن.\n"
+            "3️⃣ روی دکمه \"Share\" (اشتراک‌گذاری) بزن و \"Copy Link\" رو انتخاب کن.\n"
+            "4️⃣ لینک رو همینجا بفرست، بعدش لیست کیفیت‌های مختلف نمایش داده میشه تا یکی رو انتخاب کنی!\n\n"
+            "💡 حالا لینک ویدیوتو بفرست و با کیفیت دلخواه دانلود کن! 🎥⚡️"
+        ),
+        "en": (
+            "📥 How to download from YouTube:\n"
+            "🚀 Simply send me any YouTube link, then select your preferred quality! 🎬⬇️\n\n"
+            "🔹 Steps:\n"
+            "1️⃣ Open YouTube app or website.\n"
+            "2️⃣ Find your video.\n"
+            "3️⃣ Tap \"Share\" and choose \"Copy Link\".\n"
+            "4️⃣ Paste the link here and select your format/quality.\n\n"
+            "💡 Send a link now to start downloading! 🎥⚡️"
+        ),
+        "ru": (
+            "📥 Как скачать видео с YouTube:\n"
+            "🚀 Просто отправьте ссылку на видео, а затем выберите нужное качество! 🎬⬇️\n\n"
+            "🔹 Инструкция:\n"
+            "1️⃣ Откройте YouTube.\n"
+            "2️⃣ Откройте видео.\n"
+            "3️⃣ Нажмите «Поделиться» и «Копировать ссылку».\n"
+            "4️⃣ Отправьте ссылку сюда и выберите качество.\n\n"
+            "💡 Отправьте ссылку прямо сейчас! 🎥⚡️"
         ),
     },
 
-    # ── Channel ───────────────────────────────────────────────────────
-    "channel_text": {
-        "fa": "📢 کانال اطلاع‌رسانی: {channel_link}",
-        "en": "📢 Information channel: {channel_link}",
-        "ru": "📢 Канал новостей: {channel_link}",
+    # ── Video info & download caption ─────────────────────────────────
+    "video_info_caption": {
+        "fa": (
+            "👀 اطلاعات ویدیو به شرح زیر می‌باشد:\n"
+            "📹 Title: {title}\n"
+            "🕰 Duration: {duration}\n"
+            "📺 Channel: {uploader}\n"
+            "👁 View: {views}\n"
+            "🖨 Comments: {comments}\n"
+            "📅 Release date: {upload_date}"
+        ),
+        "en": (
+            "👀 Video details:\n"
+            "📹 Title: {title}\n"
+            "🕰 Duration: {duration}\n"
+            "📺 Channel: {uploader}\n"
+            "👁 View: {views}\n"
+            "🖨 Comments: {comments}\n"
+            "📅 Release date: {upload_date}"
+        ),
+        "ru": (
+            "👀 Информация о видео:\n"
+            "📹 Title: {title}\n"
+            "🕰 Duration: {duration}\n"
+            "📺 Channel: {uploader}\n"
+            "👁 View: {views}\n"
+            "🖨 Comments: {comments}\n"
+            "📅 Release date: {upload_date}"
+        ),
     },
-    "channel_not_set": {
-        "fa": "کانال اطلاع‌رسانی در حال حاضر تنظیم نشده است.",
-        "en": "The information channel is not configured yet.",
-        "ru": "Канал новостей пока не настроен.",
+    "playlist_info_caption": {
+        "fa": (
+            "📑 اطلاعات پلی‌لیست:\n"
+            "📌 Title: {title}\n"
+            "🔢 Total videos: {count}\n\n"
+            "⚠️ حداکثر {max_items} ویدیو به ترتیب دانلود خواهند شد."
+        ),
+        "en": (
+            "📑 Playlist Information:\n"
+            "📌 Title: {title}\n"
+            "🔢 Total videos: {count}\n\n"
+            "⚠️ Up to {max_items} videos will be downloaded sequentially."
+        ),
+        "ru": (
+            "📑 Информация о плейлисте:\n"
+            "📌 Title: {title}\n"
+            "🔢 Всего видео: {count}\n\n"
+            "⚠️ До {max_items} видео будут загружены последовательно."
+        ),
     },
 
-    # ── Download flow ─────────────────────────────────────────────────
-    "fetching_info": {
-        "fa": "در حال دریافت اطلاعات ویدیو…",
-        "en": "Fetching video info…",
-        "ru": "Получение информации о видео…",
+    # ── Progress messages (Section 6.3 - Simple alternating messages) ──
+    "status_downloading": {
+        "fa": "⏳ در حال دانلود...",
+        "en": "⏳ Downloading...",
+        "ru": "⏳ Скачивание...",
     },
-    "fetch_timeout": {
-        "fa": "دریافت اطلاعات ویدیو زمان‌بر بود. لطفاً دوباره تلاش کنید.",
-        "en": "Fetching video info timed out. Please try again.",
-        "ru": "Получение информации о видео заняло слишком много времени. Попробуйте снова.",
+    "status_processing": {
+        "fa": "⚙️ در حال پردازش...",
+        "en": "⚙️ Processing...",
+        "ru": "⚙️ Обработка...",
+    },
+    "status_waiting": {
+        "fa": "🔄 کمی صبر کنید...",
+        "en": "🔄 Please wait...",
+        "ru": "🔄 Подождите...",
+    },
+    "status_uploading": {
+        "fa": "📤 در حال آپلود...",
+        "en": "📤 Uploading to Telegram...",
+        "ru": "📤 Загрузка в Telegram...",
+    },
+    "status_done": {
+        "fa": "✅ دانلود و ارسال با موفقیت انجام شد!",
+        "en": "✅ Download and delivery completed successfully!",
+        "ru": "✅ Загрузка и доставка успешно завершены!",
+    },
+
+    # ── Problem reporting & retries ───────────────────────────────────
+    "btn_report_issue": {
+        "fa": "⚠️ گزارش مشکل",
+        "en": "⚠️ Report Issue",
+        "ru": "⚠️ Сообщить об ошибке",
+    },
+    "issue_reported": {
+        "fa": "✅ گزارش شما ثبت و به ادمین ارسال شد.",
+        "en": "✅ Your report has been submitted to support.",
+        "ru": "✅ Ваше сообщение передано администраторам.",
+    },
+    "download_incomplete": {
+        "fa": "⏳ دانلود کامل نشد، می‌خوای دوباره تلاش کنم؟",
+        "en": "⏳ Download was interrupted. Would you like to retry?",
+        "ru": "⏳ Загрузка прервана. Хотите попробовать снова?",
+    },
+    "btn_retry_yes": {
+        "fa": "بله، تلاش مجدد 🔄",
+        "en": "Yes, retry 🔄",
+        "ru": "Да, повторить 🔄",
+    },
+    "btn_retry_no": {
+        "fa": "خیر ❌",
+        "en": "No ❌",
+        "ru": "Нет ❌",
+    },
+
+    # ── Limits & Protections ──────────────────────────────────────────
+    "daily_limit_reached": {
+        "fa": (
+            "❌ سقف دانلود روزانه شما به پایان رسیده است!\n\n"
+            "برای دریافت دانلودهای هدیه، از بخش «🚀 ترافیک رایگان» در منو، لینک خود را برای دوستانتان بفرستید."
+        ),
+        "en": (
+            "❌ You have reached your daily download limit!\n\n"
+            "To get extra bonus downloads, invite friends using your link in '🚀 Free Traffic'."
+        ),
+        "ru": (
+            "❌ Вы достигли суточного лимита загрузок!\n\n"
+            "Чтобы получить бонусные загрузки, приглашайте друзей через раздел «🚀 Бесплатный трафик»."
+        ),
+    },
+    "rate_limit_exceeded": {
+        "fa": "⚠️ تعداد درخواست‌های شما بالاست. لطفاً کمی صبر کنید.",
+        "en": "⚠️ Too many requests. Please slow down and wait a moment.",
+        "ru": "⚠️ Слишком много запросов. Пожалуйста, подождите немного.",
+    },
+    "maintenance_message": {
+        "fa": "🔧 ربات موقتاً در حال به‌روزرسانیه، لطفاً بعداً امتحان کن.",
+        "en": "🔧 The bot is currently under maintenance. Please check back later.",
+        "ru": "🔧 Бот временно находится на техническом обслуживании. Пожалуйста, попробуйте позже.",
+    },
+    "banned_message": {
+        "fa": "⛔ حساب کاربری شما مسدود شده است.",
+        "en": "⛔ Your account has been suspended.",
+        "ru": "⛔ Ваш аккаунт заблокирован.",
     },
     "fetch_error": {
-        "fa": "نتوانستم اطلاعات ویدیو را دریافت کنم. ممکن است ویدیو خصوصی، محدود سن یا در دسترس نباشد.",
-        "en": "Could not fetch video info. The video might be private, age-restricted, or unavailable.",
-        "ru": "Не удалось получить информацию о видео. Возможно, видео приватное, имеет возрастные ограничения или недоступно.",
+        "fa": "نتوانستم اطلاعات ویدیو را دریافت کنم. ممکن است ویدیو خصوصی، دارای محدودیت سنی یا مسدود شده باشد.",
+        "en": "Could not fetch video info. It may be private, age-restricted, or removed.",
+        "ru": "Не удалось получить информацию о видео. Возможно, оно приватное или удалено.",
     },
-    "choose_format": {
-        "fa": "فرمت را انتخاب کنید:",
-        "en": "Choose a format:",
-        "ru": "Выберите формат:",
-    },
-    "video": {
-        "fa": "ویدیو",
-        "en": "Video",
-        "ru": "Видео",
-    },
-    "audio": {
-        "fa": "صدا",
-        "en": "Audio",
-        "ru": "Аудио",
-    },
-    "select_quality": {
-        "fa": "کیفیت ویدیو را انتخاب کنید:",
-        "en": "Select video quality:",
-        "ru": "Выберите качество видео:",
-    },
-    "downloading_video": {
-        "fa": "در حال دانلود ویدیو ({quality}p)…",
-        "en": "Downloading video ({quality}p)…",
-        "ru": "Скачивание видео ({quality}p)…",
-    },
-    "downloading_audio": {
-        "fa": "در حال دانلود صدا…",
-        "en": "Downloading audio…",
-        "ru": "Скачивание аудио…",
-    },
-    "uploading": {
-        "fa": "در حال ارسال {size}…",
-        "en": "Uploading {size}…",
-        "ru": "Отправка {size}…",
-    },
-    "done": {
-        "fa": "تمام شد! فایل ارسال شد.",
-        "en": "Done! Your file has been sent.",
-        "ru": "Готово! Файл отправлен.",
-    },
-    "file_empty": {
-        "fa": "فایل دانلود شده خالی است. ممکن است ویدیو در دسترس نباشد.",
-        "en": "The downloaded file is empty. The video may be unavailable.",
-        "ru": "Загруженный файл пуст. Возможно, видео недоступно.",
-    },
-    "file_too_large": {
-        "fa": "فایل خیلی بزرگ است ({size}). حداکثر حجم مجاز: {max_size}.",
-        "en": "File is too large ({size}). Maximum supported size: {max_size}.",
-        "ru": "Файл слишком большой ({size}). Максимальный размер: {max_size}.",
-    },
-    "already_downloading": {
-        "fa": "شما یک دانلود در حال انجام دارید. لطفاً صبر کنید.",
-        "en": "You already have a download in progress. Please wait.",
-        "ru": "У вас уже есть активная загрузка. Пожалуйста, подождите.",
-    },
-    "expired": {
-        "fa": "این انتخاب منقضی شده است. لینک را دوباره بفرستید.",
-        "en": "This selection has expired. Send the URL again.",
-        "ru": "Этот выбор истёк. Отправьте ссылку снова.",
-    },
-    "not_yours": {
-        "fa": "این درخواست شما نیست.",
-        "en": "This isn't your request.",
-        "ru": "Это не ваш запрос.",
-    },
-    "flood_wait": {
-        "fa": "تلگرام درخواست کرد {seconds} ثانیه صبر کنید. لطفاً بعداً تلاش کنید.",
-        "en": "Telegram asked us to wait {seconds}s. Please try again later.",
-        "ru": "Telegram просит подождать {seconds} сек. Попробуйте позже.",
-    },
-    "timeout": {
-        "fa": "عملیات زمان‌بر بود. لطفاً دوباره تلاش کنید.",
-        "en": "The operation timed out. Please try again.",
-        "ru": "Время операции истекло. Попробуйте снова.",
-    },
-    "no_file": {
-        "fa": "دانلود ناموفق بود — هیچ فایلی تولید نشد.",
-        "en": "Download failed — no output file was produced.",
-        "ru": "Загрузка не удалась — файл не создан.",
-    },
-    "generic_error": {
-        "fa": "مشکلی پیش آمد. لطفاً بعداً تلاش کنید.",
-        "en": "Something went wrong. Please try again later.",
-        "ru": "Что-то пошло не так. Попробуйте позже.",
-    },
-    "channel": {
-        "fa": "کانال",
-        "en": "Channel",
-        "ru": "Канал",
-    },
-    "duration": {
-        "fa": "مدت",
-        "en": "Duration",
-        "ru": "Длительность",
+    "unknown_size": {
+        "fa": "~نامشخص",
+        "en": "~Unknown",
+        "ru": "~Неизвестно",
     },
 }
 
@@ -323,8 +369,22 @@ _STRINGS: dict[str, dict[str, str]] = {
 def t(key: str, lang: str = DEFAULT_LANG, **kwargs: Any) -> str:
     """Return the localised string for *key* in *lang*, formatted with **kwargs.
 
-    Falls back to English, then to the key itself if the key is missing.
+    Checks database for admin-defined text overrides first, then falls back
+    to _STRINGS bundle, then to the key itself.
     """
+    import db
+    try:
+        custom = db.get_custom_text(key, lang)
+        if custom:
+            if kwargs:
+                try:
+                    return custom.format(**kwargs)
+                except (KeyError, IndexError):
+                    return custom
+            return custom
+    except Exception:
+        pass
+
     bundle = _STRINGS.get(key)
     if bundle is None:
         return key

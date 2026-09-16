@@ -102,6 +102,27 @@ def initialize_database():
                 )
                 conn.commit()
                 logger.info("Owner admin seeded: user_id=%s", OWNER_ID)
+
+        # Seed default settings if not present
+        default_settings = {
+            "force_join_enabled": "0",
+            "force_join_channels": "[]",
+            "daily_limit_enabled": "1",
+            "daily_limit_count": "10",
+            "referral_bonus": "3",
+            "support_id": "@SupportBot",
+            "channel_link": "https://t.me/MyChannel",
+            "download_log_channel_id": "",
+            "error_log_channel_id": "",
+            "max_playlist_items": "25",
+            "maintenance_mode": "0",
+        }
+        for k, v in default_settings.items():
+            conn.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+                (k, v),
+            )
+        conn.commit()
     finally:
         conn.close()
 
@@ -345,5 +366,194 @@ def remove_admin(user_id):
         conn.execute("DELETE FROM admins WHERE user_id = ?", (user_id,))
         conn.commit()
         return True
+    finally:
+        conn.close()
+
+
+def get_all_admins():
+    """Return all admins as a list of dicts."""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT * FROM admins ORDER BY role DESC").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# ----------------------------------------------------------------------
+# Extended Settings & Text Customization
+# ----------------------------------------------------------------------
+def get_all_settings():
+    """Return all settings as a dict."""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+        return {r["key"]: r["value"] for r in rows}
+    finally:
+        conn.close()
+
+
+def get_custom_text(key, lang):
+    """Return overridden text for (key, lang) or None."""
+    return get_setting(f"text_{lang}_{key}", None)
+
+
+def set_custom_text(key, lang, text):
+    """Override a localized text string."""
+    set_setting(f"text_{lang}_{key}", text)
+
+
+# ----------------------------------------------------------------------
+# Statistics & Analytics
+# ----------------------------------------------------------------------
+def get_user_count():
+    """Total registered users."""
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()
+        return row["count"] if row else 0
+    finally:
+        conn.close()
+
+
+def get_active_users_today():
+    """Count of users who downloaded something today (UTC)."""
+    today_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(DISTINCT user_id) AS count FROM downloads WHERE created_at LIKE ?",
+            (f"{today_prefix}%",),
+        ).fetchone()
+        return row["count"] if row else 0
+    finally:
+        conn.close()
+
+
+def get_active_users_month():
+    """Count of users who downloaded something this month (UTC)."""
+    month_prefix = datetime.now(timezone.utc).strftime("%Y-%m")
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(DISTINCT user_id) AS count FROM downloads WHERE created_at LIKE ?",
+            (f"{month_prefix}%",),
+        ).fetchone()
+        return row["count"] if row else 0
+    finally:
+        conn.close()
+
+
+def get_growth_stats():
+    """Calculate comparisons and statistics."""
+    conn = _connect()
+    try:
+        total_users = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
+        total_downloads = conn.execute("SELECT COUNT(*) as c FROM downloads").fetchone()["c"]
+        total_failed = conn.execute("SELECT COUNT(*) as c FROM downloads WHERE status = 'failed'").fetchone()["c"]
+        
+        # Today vs Yesterday
+        today_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        dl_today = conn.execute("SELECT COUNT(*) as c FROM downloads WHERE created_at LIKE ?", (f"{today_prefix}%",)).fetchone()["c"]
+        
+        # Total size downloaded (bytes)
+        size_row = conn.execute("SELECT SUM(file_size) as s FROM downloads WHERE file_size IS NOT NULL").fetchone()
+        total_bytes = size_row["s"] if size_row and size_row["s"] else 0
+
+        return {
+            "total_users": total_users,
+            "total_downloads": total_downloads,
+            "failed_downloads": total_failed,
+            "downloads_today": dl_today,
+            "active_users_today": get_active_users_today(),
+            "active_users_month": get_active_users_month(),
+            "total_bytes": total_bytes,
+        }
+    finally:
+        conn.close()
+
+
+# ----------------------------------------------------------------------
+# User Management Helpers
+# ----------------------------------------------------------------------
+def search_users(query, limit=20):
+    """Search users by user_id or username."""
+    conn = _connect()
+    try:
+        q = f"%{query}%"
+        rows = conn.execute(
+            """
+            SELECT * FROM users
+            WHERE CAST(user_id AS TEXT) LIKE ? OR username LIKE ?
+            ORDER BY user_id DESC LIMIT ?
+            """,
+            (q, q, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def export_users_csv():
+    """Generate CSV string of all users."""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT * FROM users ORDER BY user_id DESC").fetchall()
+        lines = [
+            "user_id,username,language,joined_at,is_banned,referred_by,bonus_downloads,custom_daily_limit"
+        ]
+        for r in rows:
+            u = dict(r)
+            line = f"{u.get('user_id')},{u.get('username') or ''},{u.get('language') or 'fa'},{u.get('joined_at') or ''},{u.get('is_banned') or 0},{u.get('referred_by') or ''},{u.get('bonus_downloads') or 0},{u.get('custom_daily_limit') or ''}"
+            lines.append(line)
+        return "\n".join(lines)
+    finally:
+        conn.close()
+
+
+def get_active_users_since(months=3):
+    """Return list of distinct user_ids active within the last *months* months."""
+    conn = _connect()
+    try:
+        # Approximate 30 days per month
+        rows = conn.execute(
+            """
+            SELECT DISTINCT user_id FROM downloads
+            WHERE created_at >= datetime('now', '-' || ? || ' month')
+            UNION
+            SELECT user_id FROM users
+            WHERE joined_at >= datetime('now', '-' || ? || ' month')
+            """,
+            (months, months),
+        ).fetchall()
+        return [r["user_id"] for r in rows if r["user_id"]]
+    finally:
+        conn.close()
+
+
+# ----------------------------------------------------------------------
+# Cache Stats & Error Log Inspection
+# ----------------------------------------------------------------------
+def get_cache_stats():
+    """Return count of cached items and sum of file sizes."""
+    conn = _connect()
+    try:
+        count_row = conn.execute("SELECT COUNT(*) AS c FROM cache").fetchone()
+        size_row = conn.execute("SELECT SUM(file_size) AS s FROM cache WHERE file_size IS NOT NULL").fetchone()
+        count = count_row["c"] if count_row else 0
+        total_size = size_row["s"] if size_row and size_row["s"] else 0
+        return {"count": count, "total_size": total_size}
+    finally:
+        conn.close()
+
+
+def get_recent_errors(limit=20):
+    """Return the most recent error logs."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM error_logs ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()

@@ -7,14 +7,20 @@ import math
 
 
 YOUTUBE_URL_PATTERN = re.compile(
-    r'^(https?://)?(www\.)?(youtube\.com/(watch\?v=|shorts/|embed/)|youtu\.be/)[\w-]{11}',
+    r'^(https?://)?(www\.)?(youtube\.com/(watch\?v=|shorts/|embed/|playlist\?list=)|youtu\.be/)[\w-]+',
     re.IGNORECASE,
 )
 
 
 def is_valid_youtube_url(url):
-    """Return True if *url* looks like a public YouTube video link."""
-    return bool(YOUTUBE_URL_PATTERN.match(url.strip()))
+    """Return True if *url* looks like a public YouTube video or playlist link."""
+    clean = url.strip()
+    return bool(YOUTUBE_URL_PATTERN.match(clean)) or "youtube.com" in clean or "youtu.be" in clean
+
+
+def is_playlist_url(url):
+    """Return True if *url* points to a YouTube playlist."""
+    return "list=" in url.strip()
 
 
 def sanitize_filename(filename):

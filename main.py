@@ -17,6 +17,7 @@ from config import (
     LOG_LEVEL,
 )
 from handlers import register_handlers
+from admin_handlers import register_admin_handlers
 import db
 
 logging.basicConfig(
@@ -67,6 +68,7 @@ async def main():
 
     client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
     register_handlers(client)
+    register_admin_handlers(client)
 
     # Run the health-check server in the background
     asyncio.create_task(_start_health_server())

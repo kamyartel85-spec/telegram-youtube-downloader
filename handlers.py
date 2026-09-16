@@ -3,6 +3,8 @@
 import asyncio
 import uuid
 import os
+import json
+import time
 import logging
 from datetime import datetime, timezone
 
@@ -15,27 +17,123 @@ from config import (
     MAX_CONCURRENT_DOWNLOADS,
     DOWNLOAD_TIMEOUT,
     UPLOAD_TIMEOUT,
+    MAX_PLAYLIST_ITEMS,
+    RATE_LIMIT_PER_MINUTE,
     OWNER_ID,
 )
-from utils import is_valid_youtube_url, format_size, format_duration, cleanup_files
-from youtube import extract_info, download_video, download_audio
-from progress import DownloadProgressTracker, UploadProgressTracker
+from utils import (
+    is_valid_youtube_url,
+    is_playlist_url,
+    format_size,
+    format_duration,
+    cleanup_files,
+)
+from youtube import (
+    extract_info,
+    extract_playlist_info,
+    download_video,
+    download_audio,
+)
+from progress import SimpleStatusTracker, SimpleUploadTracker
 from i18n import t, menu_labels, LANG_LABELS, SUPPORTED_LANGS
+from keyboards import (
+    main_menu_keyboard,
+    lang_inline_keyboard,
+    force_join_keyboard,
+    quality_and_format_keyboard,
+    file_action_keyboard,
+    retry_keyboard,
+)
 import db
 
 logger = logging.getLogger(__name__)
 
-# download_id → {url, title, user_id, lang}
-_pending: dict = {}
-# user_id → number of active downloads
-_active_counts: dict = {}
+# State tracking
+# download_id → metadata dict
+_pending_downloads: dict = {}
+# user_id → active downloads count
+_active_user_downloads: dict = {}
+# user_id → list of message timestamps (for rate limiting)
+_user_rate_limits: dict = {}
 
 
 # ----------------------------------------------------------------------
-# Helpers
+# Middleware / Pre-flight checks
 # ----------------------------------------------------------------------
-async def _get_user_lang(event):
-    """Return the user's saved language, creating the user if needed."""
+def _is_rate_limited(user_id: int) -> bool:
+    """Return True if user exceeded rate limit."""
+    now = time.time()
+    times = _user_rate_limits.setdefault(user_id, [])
+    # Remove timestamps older than 60s
+    _user_rate_limits[user_id] = [ts for ts in times if now - ts < 60]
+    if len(_user_rate_limits[user_id]) >= RATE_LIMIT_PER_MINUTE:
+        return True
+    _user_rate_limits[user_id].append(now)
+    return False
+
+
+async def _check_maintenance(event, user_id: int) -> bool:
+    """Return True if maintenance is active and user is not admin."""
+    admin = await asyncio.to_thread(db.get_admin, user_id)
+    if admin or (OWNER_ID and user_id == OWNER_ID):
+        return False
+    val = await asyncio.to_thread(db.get_setting, "maintenance_mode", "0")
+    if val == "1":
+        u = await asyncio.to_thread(db.get_user, user_id)
+        lang = u.get("language", "fa") if u else "fa"
+        await event.respond(t("maintenance_message", lang))
+        return True
+    return False
+
+
+async def _check_force_join(client, event, user_id: int, lang: str = "fa") -> bool:
+    """Check if user joined all required channels. Returns True if passed, False if blocked."""
+    admin = await asyncio.to_thread(db.get_admin, user_id)
+    if admin or (OWNER_ID and user_id == OWNER_ID):
+        return True
+
+    enabled = await asyncio.to_thread(db.get_setting, "force_join_enabled", "0")
+    if enabled != "1":
+        return True
+
+    raw_channels = await asyncio.to_thread(db.get_setting, "force_join_channels", "[]")
+    try:
+        channels = json.loads(raw_channels)
+    except Exception:
+        channels = []
+
+    if not channels:
+        return True
+
+    not_joined = []
+    for ch in channels:
+        channel_ref = ch.get("url") or ch.get("name")
+        if not channel_ref:
+            continue
+        try:
+            # Extract username or handle
+            handle = channel_ref.rstrip("/").split("/")[-1]
+            if not handle.startswith("@") and not handle.startswith("+"):
+                handle = f"@{handle}"
+            perms = await client.get_permissions(handle, user_id)
+            if perms is None:
+                not_joined.append(ch)
+        except Exception:
+            # If checking permissions fails or is private link, keep listed
+            not_joined.append(ch)
+
+    if not_joined:
+        await event.respond(
+            t("force_join_prompt", lang),
+            buttons=force_join_keyboard(channels, lang),
+        )
+        return False
+
+    return True
+
+
+async def _get_or_create_user(event, referral_id=None):
+    """Retrieve user from database or create new record."""
     user_id = event.sender_id
     user = await asyncio.to_thread(db.get_user, user_id)
     if user is None:
@@ -45,394 +143,714 @@ async def _get_user_lang(event):
             username = getattr(sender, "username", None)
         except Exception:
             pass
-        user = await asyncio.to_thread(db.create_user, user_id, username)
-    return user.get("language", "fa") if user else "fa"
+        user = await asyncio.to_thread(
+            db.create_user,
+            user_id=user_id,
+            username=username,
+            referred_by=referral_id,
+            language="fa",
+        )
+        # Give bonus to inviter if valid referral
+        if referral_id and referral_id != user_id:
+            inviter = await asyncio.to_thread(db.get_user, referral_id)
+            if inviter:
+                bonus_str = await asyncio.to_thread(db.get_setting, "referral_bonus", "3")
+                try:
+                    bonus = int(bonus_str)
+                except ValueError:
+                    bonus = 3
+                cur_bonus = inviter.get("bonus_downloads") or 0
+                await asyncio.to_thread(
+                    db.update_user,
+                    referral_id,
+                    bonus_downloads=cur_bonus + bonus,
+                )
+    return user
 
 
-def _main_menu(lang):
-    """Build the reply-keyboard for *lang*."""
-    labels = menu_labels(lang)
-    return [
-        [Button.text(labels[0], resize=True), Button.text(labels[1])],
-        [Button.text(labels[2]), Button.text(labels[3])],
-        [Button.text(labels[4]), Button.text(labels[5])],
-        [Button.text(labels[6])],
-    ]
+async def _has_download_allowance(user_id: int) -> bool:
+    """Verify if user has available download quota for today."""
+    daily_enabled = await asyncio.to_thread(db.get_setting, "daily_limit_enabled", "1")
+    if daily_enabled != "1":
+        return True
 
+    user = await asyncio.to_thread(db.get_user, user_id)
+    if not user:
+        return True
 
-def _lang_buttons():
-    """Inline buttons for the language picker."""
-    return [
-        [Button.inline(LANG_LABELS[lang], data=f"lang:{lang}")]
-        for lang in SUPPORTED_LANGS
-    ]
+    custom_limit = user.get("custom_daily_limit")
+    if custom_limit is not None:
+        daily_limit = custom_limit
+    else:
+        limit_str = await asyncio.to_thread(db.get_setting, "daily_limit_count", "10")
+        try:
+            daily_limit = int(limit_str)
+        except ValueError:
+            daily_limit = 10
+
+    bonus = user.get("bonus_downloads") or 0
+    total_allowed = daily_limit + bonus
+
+    # Count downloads today
+    today_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    recent = await asyncio.to_thread(db.get_user_downloads, user_id, 100)
+    today_count = sum(1 for d in recent if (d.get("created_at") or "").startswith(today_prefix) and d.get("status") == "success")
+
+    return today_count < total_allowed
 
 
 # ----------------------------------------------------------------------
-# Handler registration
+# Registration
 # ----------------------------------------------------------------------
 def register_handlers(client):
-    """Attach all command, message, and callback handlers to *client*."""
+    """Attach all event listeners to Telethon client."""
 
-    # ── /start ────────────────────────────────────────────────────────
-    @client.on(events.NewMessage(pattern=r"^/start(@\w+)?$"))
-    async def _start(event):
+    # ------------------------------------------------------------------
+    # /start
+    # ------------------------------------------------------------------
+    @client.on(events.NewMessage(pattern=r"^/start(?:\s+(ref_\d+))?"))
+    async def handle_start(event):
         user_id = event.sender_id
-        user = await asyncio.to_thread(db.get_user, user_id)
+        if await _check_maintenance(event, user_id):
+            return
 
-        if user is None:
-            # First-time user: ask for language
+        ref_param = event.pattern_match.group(1)
+        ref_id = None
+        if ref_param and ref_param.startswith("ref_"):
+            try:
+                ref_id = int(ref_param.replace("ref_", ""))
+            except ValueError:
+                ref_id = None
+
+        existing = await asyncio.to_thread(db.get_user, user_id)
+        user = await _get_or_create_user(event, referral_id=ref_id)
+        lang = user.get("language", "fa")
+
+        # Check forced join first
+        if not await _check_force_join(client, event, user_id, lang):
+            return
+
+        # If user was not yet created before or has not chosen language, show language picker
+        if existing is None:
             await event.respond(
-                t("select_language", "fa"),
-                buttons=_lang_buttons(),
+                t("select_language", lang),
+                buttons=lang_inline_keyboard(),
             )
+            return
+
+        # Send welcome message with reply keyboard
+        await event.respond(
+            t("welcome", lang),
+            buttons=main_menu_keyboard(lang),
+        )
+
+    # ------------------------------------------------------------------
+    # Language change callback
+    # ------------------------------------------------------------------
+    @client.on(events.CallbackQuery(pattern=r"^lang:(fa|en|ru)$"))
+    async def handle_lang_callback(event):
+        lang = event.pattern_match.group(1).decode("utf-8")
+        user_id = event.sender_id
+        await asyncio.to_thread(db.update_user, user_id, language=lang)
+        await event.answer()
+
+        await event.respond(
+            t("lang_changed", lang),
+        )
+        await event.respond(
+            t("welcome", lang),
+            buttons=main_menu_keyboard(lang),
+        )
+
+    # ------------------------------------------------------------------
+    # Forced join verification callback
+    # ------------------------------------------------------------------
+    @client.on(events.CallbackQuery(pattern=r"^check_join$"))
+    async def handle_check_join(event):
+        user_id = event.sender_id
+        u = await asyncio.to_thread(db.get_user, user_id)
+        lang = u.get("language", "fa") if u else "fa"
+
+        passed = await _check_force_join(client, event, user_id, lang)
+        if passed:
+            await event.answer("✅", alert=False)
+            await event.respond(
+                t("welcome", lang),
+                buttons=main_menu_keyboard(lang),
+            )
+        else:
+            await event.answer(t("force_join_not_yet", lang), alert=True)
+
+    # ------------------------------------------------------------------
+    # Reply Keyboard Menu Clicks
+    # ------------------------------------------------------------------
+    @client.on(events.NewMessage)
+    async def handle_menu_text(event):
+        text = (event.raw_text or "").strip()
+        if not text or text.startswith("/"):
+            return
+
+        user_id = event.sender_id
+        if await _check_maintenance(event, user_id):
+            return
+
+        if _is_rate_limited(user_id):
+            u = await asyncio.to_thread(db.get_user, user_id)
+            lang = u.get("language", "fa") if u else "fa"
+            await event.respond(t("rate_limit_exceeded", lang))
+            return
+
+        user = await _get_or_create_user(event)
+        if user.get("is_banned"):
+            await event.respond(t("banned_message", user.get("language", "fa")))
             return
 
         lang = user.get("language", "fa")
-        await event.respond(
-            t("welcome", lang),
-            buttons=_main_menu(lang),
-        )
 
-    # ── /help ────────────────────────────────────────────────────────
-    @client.on(events.NewMessage(pattern=r"^/help(@\w+)?$"))
-    async def _help(event):
-        lang = await _get_user_lang(event)
-        labels = menu_labels(lang)
-        await event.respond(
-            t("guide_text", lang),
-            buttons=_main_menu(lang),
-        )
-
-    # ── Reply-keyboard messages ───────────────────────────────────────
-    @client.on(events.NewMessage(incoming=True))
-    async def _menu_or_url(event):
-        text = (event.raw_text or "").strip()
-        user_id = event.sender_id
-
-        # Skip commands — handled by dedicated handlers
-        if text.startswith("/"):
-            return
-
-        # If it's a valid YouTube URL, handle download flow
-        if is_valid_youtube_url(text):
-            await _handle_url(event)
-            return
-
-        # Otherwise, check if it matches a menu button label
-        lang = await _get_user_lang(event)
-        labels = menu_labels(lang)
-
-        if text == labels[0]:  # Search YouTube
+        # 🔍 جست‌وجو در یوتیوب
+        if any(text == t("btn_search", l) for l in SUPPORTED_LANGS):
             await event.respond(t("search_prompt", lang))
+            return
 
-        elif text == labels[1]:  # My Account
-            await _show_account(event, lang)
+        # 👤 حساب من
+        if any(text == t("btn_account", l) for l in SUPPORTED_LANGS):
+            recent = await asyncio.to_thread(db.get_user_downloads, user_id, 200)
+            total_dl = len([d for d in recent if d.get("status") == "success"])
+            today_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            today_dl = len([d for d in recent if (d.get("created_at") or "").startswith(today_prefix) and d.get("status") == "success"])
 
-        elif text == labels[2]:  # Free Traffic
-            await event.respond(t("free_traffic_placeholder", lang))
+            daily_enabled = await asyncio.to_thread(db.get_setting, "daily_limit_enabled", "1")
+            if daily_enabled != "1":
+                rem_str = "بی‌نهایت" if lang == "fa" else "Unlimited"
+            else:
+                c_lim = user.get("custom_daily_limit")
+                if c_lim is not None:
+                    max_allowed = c_lim + (user.get("bonus_downloads") or 0)
+                else:
+                    lim_str = await asyncio.to_thread(db.get_setting, "daily_limit_count", "10")
+                    try:
+                        max_allowed = int(lim_str) + (user.get("bonus_downloads") or 0)
+                    except ValueError:
+                        max_allowed = 10 + (user.get("bonus_downloads") or 0)
+                remaining = max(0, max_allowed - today_dl)
+                rem_str = str(remaining)
 
-        elif text == labels[3]:  # Support
-            await _show_support(event, lang)
+            await event.respond(
+                t(
+                    "account_text",
+                    lang,
+                    user_id=user_id,
+                    total_downloads=total_dl,
+                    today_downloads=today_dl,
+                    remaining_downloads=rem_str,
+                )
+            )
+            return
 
-        elif text == labels[4]:  # Change Language
+        # 🚀 ترافیک رایگان
+        if any(text == t("btn_free_traffic", l) for l in SUPPORTED_LANGS):
+            me = await client.get_me()
+            bot_user = me.username or "Bot"
+            ref_link = f"https://t.me/{bot_user}?start=ref_{user_id}"
+            bonus_str = await asyncio.to_thread(db.get_setting, "referral_bonus", "3")
+            await event.respond(
+                t(
+                    "free_traffic_text",
+                    lang,
+                    bonus_count=bonus_str,
+                    referral_link=ref_link,
+                )
+            )
+            return
+
+        # ☎️ پشتیبانی
+        if any(text == t("btn_support", l) for l in SUPPORTED_LANGS):
+            supp = await asyncio.to_thread(db.get_setting, "support_id", "@SupportBot")
+            await event.respond(t("support_text", lang, support_id=supp))
+            return
+
+        # 🌐 تغییر زبان
+        if any(text == t("btn_change_lang", l) for l in SUPPORTED_LANGS):
             await event.respond(
                 t("select_language", lang),
-                buttons=_lang_buttons(),
+                buttons=lang_inline_keyboard(),
             )
+            return
 
-        elif text == labels[5]:  # YouTube Download Guide
+        # 🍿 راهنمای دانلود از یوتیوب
+        if any(text == t("btn_guide", l) for l in SUPPORTED_LANGS):
             await event.respond(t("guide_text", lang))
-
-        elif text == labels[6]:  # Information Channel
-            await _show_channel(event, lang)
-
-    # ── Callback queries ─────────────────────────────────────────────
-    @client.on(events.CallbackQuery())
-    async def _callback(event):
-        try:
-            data = event.data.decode("utf-8")
-            parts = data.split(":")
-            action = parts[0]
-        except (UnicodeDecodeError, IndexError):
             return
 
-        # ── Language selection ─────────────────────────────────────────
-        if action == "lang":
-            lang = parts[1] if len(parts) > 1 else "fa"
-            if lang not in SUPPORTED_LANGS:
-                lang = "fa"
-            user = await asyncio.to_thread(db.get_user, event.sender_id)
-            if user is None:
-                username = None
+        # 📢 کانال اطلاع‌رسانی
+        if any(text == t("btn_channel", l) for l in SUPPORTED_LANGS):
+            ch_link = await asyncio.to_thread(db.get_setting, "channel_link", "https://t.me")
+            await event.respond(t("channel_text", lang, channel_link=ch_link))
+            return
+
+    # ------------------------------------------------------------------
+    # YouTube Link Detection (Single Video or Playlist)
+    # ------------------------------------------------------------------
+    @client.on(events.NewMessage)
+    async def handle_youtube_link(event):
+        url = (event.raw_text or "").strip()
+        if not is_valid_youtube_url(url):
+            return
+
+        user_id = event.sender_id
+        if await _check_maintenance(event, user_id):
+            return
+
+        if _is_rate_limited(user_id):
+            u = await asyncio.to_thread(db.get_user, user_id)
+            lang = u.get("language", "fa") if u else "fa"
+            await event.respond(t("rate_limit_exceeded", lang))
+            return
+
+        user = await _get_or_create_user(event)
+        if user.get("is_banned"):
+            await event.respond(t("banned_message", user.get("language", "fa")))
+            return
+
+        lang = user.get("language", "fa")
+
+        if not await _check_force_join(client, event, user_id, lang):
+            return
+
+        status_msg = await event.respond(t("status_waiting", lang))
+
+        # Check if playlist
+        if is_playlist_url(url):
+            try:
+                max_pl_str = await asyncio.to_thread(db.get_setting, "max_playlist_items", str(MAX_PLAYLIST_ITEMS))
                 try:
-                    sender = await event.get_sender()
-                    username = getattr(sender, "username", None)
-                except Exception:
-                    pass
-                await asyncio.to_thread(db.create_user, event.sender_id, username, language=lang)
-            else:
-                await asyncio.to_thread(db.update_user, event.sender_id, language=lang)
-            await event.answer()
-            await event.edit(t("lang_changed", lang))
-            # Send fresh welcome with main menu
-            await event.respond(
-                t("welcome", lang),
-                buttons=_main_menu(lang),
-            )
+                    max_pl = int(max_pl_str)
+                except ValueError:
+                    max_pl = MAX_PLAYLIST_ITEMS
+
+                info = await asyncio.to_thread(extract_playlist_info, url, max_pl)
+                dl_id = str(uuid.uuid4())[:8]
+                _pending_downloads[dl_id] = {
+                    "is_playlist": True,
+                    "url": url,
+                    "title": info["title"],
+                    "items": info["items"],
+                    "user_id": user_id,
+                    "lang": lang,
+                }
+                caption = t(
+                    "playlist_info_caption",
+                    lang,
+                    title=info["title"],
+                    count=info["total_count"],
+                    max_items=len(info["items"]),
+                )
+                await status_msg.delete()
+                await event.respond(
+                    caption,
+                    buttons=quality_and_format_keyboard(dl_id, {}, lang),
+                )
+            except Exception as exc:
+                logger.error("Playlist extract error: %s", exc)
+                await status_msg.edit(t("fetch_error", lang))
+                await asyncio.to_thread(db.add_error_log, user_id, url, str(exc))
             return
 
-        # ── Download flow callbacks ────────────────────────────────────
+        # Single video
         try:
-            download_id = parts[1]
-        except IndexError:
-            return
+            info = await asyncio.to_thread(extract_info, url)
+            dl_id = str(uuid.uuid4())[:8]
+            _pending_downloads[dl_id] = {
+                "is_playlist": False,
+                "url": url,
+                "video_id": info["id"],
+                "title": info["title"],
+                "uploader": info["uploader"],
+                "duration": info["duration"],
+                "user_id": user_id,
+                "lang": lang,
+            }
 
-        entry = _pending.get(download_id)
-        if entry is None:
-            await event.answer(t("expired", entry.get("lang", "fa") if entry else "fa"))
-            return
+            caption = t(
+                "video_info_caption",
+                lang,
+                title=info["title"],
+                duration=info["duration"],
+                uploader=info["uploader"],
+                views=info["view_count"],
+                comments=info["comment_count"],
+                upload_date=info["upload_date"],
+            )
 
-        if entry["user_id"] != event.sender_id:
-            await event.answer(t("not_yours", entry.get("lang", "fa")))
+            await status_msg.delete()
+            if info.get("thumbnail"):
+                await client.send_file(
+                    event.chat_id,
+                    info["thumbnail"],
+                    caption=caption,
+                    buttons=quality_and_format_keyboard(dl_id, info.get("format_sizes"), lang),
+                )
+            else:
+                await event.respond(
+                    caption,
+                    buttons=quality_and_format_keyboard(dl_id, info.get("format_sizes"), lang),
+                )
+        except Exception as exc:
+            logger.error("Extract video info error: %s", exc)
+            await status_msg.edit(t("fetch_error", lang))
+            await asyncio.to_thread(db.add_error_log, user_id, url, str(exc))
+
+    # ------------------------------------------------------------------
+    # Quality / Format Callback (Download Execution)
+    # ------------------------------------------------------------------
+    @client.on(events.CallbackQuery(pattern=r"^dl:([a-zA-Z0-9_-]+):(a_med|a_best|v_\d+)$"))
+    async def handle_download_callback(event):
+        dl_id = event.pattern_match.group(1).decode("utf-8")
+        choice = event.pattern_match.group(2).decode("utf-8")
+        user_id = event.sender_id
+
+        entry = _pending_downloads.get(dl_id)
+        if not entry:
+            await event.answer("⚠️ این درخواست منقضی شده است.", alert=True)
             return
 
         lang = entry.get("lang", "fa")
 
-        if action == "v":
+        # Check quota
+        allowed = await _has_download_allowance(user_id)
+        if not allowed:
             await event.answer()
-            buttons = [
-                [
-                    Button.inline("360p", data=f"q:{download_id}:360"),
-                    Button.inline("480p", data=f"q:{download_id}:480"),
-                    Button.inline("720p", data=f"q:{download_id}:720"),
-                    Button.inline("1080p", data=f"q:{download_id}:1080"),
-                ]
-            ]
-            await event.edit(t("select_quality", lang), buttons=buttons)
+            await event.respond(t("daily_limit_reached", lang))
+            return
 
-        elif action == "a":
-            await event.answer()
-            await _process_download(event, download_id, "audio", None)
+        # Check concurrent
+        active = _active_user_downloads.get(user_id, 0)
+        if active >= MAX_CONCURRENT_DOWNLOADS:
+            await event.answer("⚠️ دانلود دیگری در حال اجراست.", alert=True)
+            return
 
-        elif action == "q":
-            quality = parts[2]
-            await event.answer()
-            await _process_download(event, download_id, "video", quality)
+        _active_user_downloads[user_id] = active + 1
+        await event.answer()
+
+        status_msg = await event.respond(t("status_waiting", lang))
+
+        # Playlist batch execution
+        if entry.get("is_playlist"):
+            items = entry.get("items", [])
+            total = len(items)
+            success_count = 0
+            for idx, item in enumerate(items, 1):
+                await status_msg.edit(f"⏳ در حال دانلود ویدیو {idx} از {total}...")
+                try:
+                    ok = await _process_single_media(
+                        client=client,
+                        event=event,
+                        status_msg=status_msg,
+                        user_id=user_id,
+                        url=item["url"],
+                        video_id=item.get("id"),
+                        title=item.get("title", f"Video {idx}"),
+                        choice=choice,
+                        lang=lang,
+                        send_status=False,
+                    )
+                    if ok:
+                        success_count += 1
+                except Exception as e:
+                    logger.error("Playlist item download failed: %s", e)
+            await status_msg.edit(f"✅ {success_count} از {total} ویدیو با موفقیت ارسال شد.")
+            _active_user_downloads[user_id] = max(0, _active_user_downloads.get(user_id, 1) - 1)
+            return
+
+        # Single video execution
+        try:
+            await _process_single_media(
+                client=client,
+                event=event,
+                status_msg=status_msg,
+                user_id=user_id,
+                url=entry["url"],
+                video_id=entry.get("video_id"),
+                title=entry.get("title"),
+                choice=choice,
+                lang=lang,
+                send_status=True,
+            )
+        finally:
+            _active_user_downloads[user_id] = max(0, _active_user_downloads.get(user_id, 1) - 1)
+
+    # ------------------------------------------------------------------
+    # Report problem callback
+    # ------------------------------------------------------------------
+    @client.on(events.CallbackQuery(pattern=r"^report:(\d+)$"))
+    async def handle_report(event):
+        dl_record_id = event.pattern_match.group(1).decode("utf-8")
+        user_id = event.sender_id
+        u = await asyncio.to_thread(db.get_user, user_id)
+        lang = u.get("language", "fa") if u else "fa"
+
+        # Log problem
+        await asyncio.to_thread(
+            db.add_error_log,
+            user_id,
+            f"dl_id:{dl_record_id}",
+            "User reported problem with downloaded file",
+        )
+
+        # Notify error log channel if configured
+        err_ch = await asyncio.to_thread(db.get_setting, "error_log_channel_id", "")
+        if err_ch:
+            try:
+                await client.send_message(
+                    int(err_ch) if err_ch.startswith("-") else err_ch,
+                    f"⚠️ <b>گزارش مشکل دانلود:</b>\n"
+                    f"👤 کاربر: <code>{user_id}</code>\n"
+                    f"📁 شناسه دانلود: <code>{dl_record_id}</code>",
+                    parse_mode="html",
+                )
+            except Exception as exc:
+                logger.error("Could not forward report to error channel: %s", exc)
+
+        await event.answer(t("issue_reported", lang), alert=True)
+
+    # ------------------------------------------------------------------
+    # Retry callback
+    # ------------------------------------------------------------------
+    @client.on(events.CallbackQuery(pattern=r"^retry:([a-zA-Z0-9_-]+)$"))
+    async def handle_retry(event):
+        dl_id = event.pattern_match.group(1).decode("utf-8")
+        entry = _pending_downloads.get(dl_id)
+        if not entry:
+            await event.answer("⚠️ منقضی شده است.", alert=True)
+            return
+        await event.answer()
+        # Prompt quality again
+        lang = entry.get("lang", "fa")
+        await event.respond(
+            "لطفاً کیفیت مورد نظر را مجدداً انتخاب کنید:",
+            buttons=quality_and_format_keyboard(dl_id, {}, lang),
+        )
+
+    @client.on(events.CallbackQuery(pattern=r"^cancel_retry:([a-zA-Z0-9_-]+)$"))
+    async def handle_cancel_retry(event):
+        await event.delete()
 
 
 # ----------------------------------------------------------------------
-# Menu helper functions
+# Single Media Download & Upload Workflow
 # ----------------------------------------------------------------------
-async def _show_account(event, lang):
-    """Show the user's account info."""
-    user_id = event.sender_id
-    user = await asyncio.to_thread(db.get_user, user_id)
+async def _process_single_media(
+    client,
+    event,
+    status_msg,
+    user_id,
+    url,
+    video_id,
+    title,
+    choice,
+    lang="fa",
+    send_status=True,
+) -> bool:
+    """Download or retrieve from cache and deliver to user."""
+    is_audio = choice.startswith("a_")
+    media_type = "audio" if is_audio else "video"
+    quality = choice.replace("v_", "") if not is_audio else choice
 
-    username = "—"
-    if user:
-        username = user.get("username") or "—"
+    # 1. Check Cache (Section 6.1)
+    if video_id:
+        cached = await asyncio.to_thread(db.get_cache, video_id, quality, media_type)
+        if cached and cached.get("telegram_file_id"):
+            file_id = cached["telegram_file_id"]
+            if send_status:
+                await status_msg.edit(t("status_done", lang))
 
-    # Total downloads
-    all_downloads = await asyncio.to_thread(db.get_user_downloads, user_id, limit=10000)
-    total = len(all_downloads)
+            rec_id = await asyncio.to_thread(
+                db.add_download,
+                user_id=user_id,
+                url=url,
+                title=title,
+                media_type=media_type,
+                quality=quality,
+                file_size=cached.get("file_size"),
+                status="success",
+            )
 
-    # Today's downloads
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    today_count = sum(
-        1 for d in all_downloads
-        if d.get("created_at", "").startswith(today_str)
-    )
+            caption = f"🎬 {title}" if media_type == "video" else f"🎧 {title}"
+            sent_msg = await client.send_file(
+                event.chat_id,
+                file_id,
+                caption=caption,
+                buttons=file_action_keyboard(rec_id, lang),
+            )
 
-    # Daily limit
-    custom_limit = user.get("custom_daily_limit") if user else None
-    if custom_limit:
-        remaining = max(0, custom_limit - today_count)
-        limit_text = f"{remaining} / {custom_limit}"
-    else:
-        limit_text = t("account_unlimited", lang)
+            # Forward to download log channel (Section 8)
+            await _forward_to_download_log(client, sent_msg, title, event.sender)
+            return True
 
-    text = (
-        f"**{t('account_title', lang)}**\n\n"
-        f"{t('account_user_id', lang)}: `{user_id}`\n"
-        f"{t('account_username', lang)}: @{username}\n"
-        f"{t('account_total_downloads', lang)}: {total}\n"
-        f"{t('account_today_downloads', lang)}: {today_count}\n"
-        f"{t('account_daily_limit', lang)}: {limit_text}"
-    )
-    await event.respond(text, buttons=_main_menu(lang))
+    # 2. Cache miss: download from YouTube
+    session_id = f"{user_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    loop = asyncio.get_running_loop()
 
-
-async def _show_support(event, lang):
-    """Show support contact info from settings."""
-    support_id = await asyncio.to_thread(db.get_setting, "support_id")
-    if support_id:
-        await event.respond(
-            t("support_text", lang, support_id=support_id),
-            buttons=_main_menu(lang),
-        )
-    else:
-        await event.respond(
-            t("support_not_set", lang),
-            buttons=_main_menu(lang),
-        )
-
-
-async def _show_channel(event, lang):
-    """Show the information channel link from settings."""
-    channel_link = await asyncio.to_thread(db.get_setting, "channel_link")
-    if channel_link:
-        await event.respond(
-            t("channel_text", lang, channel_link=channel_link),
-            buttons=_main_menu(lang),
-        )
-    else:
-        await event.respond(
-            t("channel_not_set", lang),
-            buttons=_main_menu(lang),
-        )
-
-
-# ----------------------------------------------------------------------
-# YouTube URL handling
-# ----------------------------------------------------------------------
-async def _handle_url(event):
-    """Process a YouTube URL sent by the user."""
-    url = event.raw_text.strip()
-    user_id = event.sender_id
-
-    lang = await _get_user_lang(event)
-
-    if _active_counts.get(user_id, 0) >= MAX_CONCURRENT_DOWNLOADS:
-        await event.respond(t("already_downloading", lang))
-        return
-
-    status = await event.respond(t("fetching_info", lang))
+    tracker = SimpleStatusTracker(status_msg, loop, lang=lang)
 
     try:
-        info = await asyncio.wait_for(
-            asyncio.to_thread(extract_info, url),
-            timeout=30,
-        )
-    except asyncio.TimeoutError:
-        await status.edit(t("fetch_timeout", lang))
-        return
-    except Exception:
-        logger.exception("extract_info failed for %s", url)
-        await status.edit(t("fetch_error", lang))
-        return
+        if send_status:
+            await status_msg.edit(t("status_downloading", lang))
 
-    title = info.get("title", "Unknown")
-    duration = info.get("duration", 0)
-    uploader = info.get("uploader", "Unknown")
-
-    download_id = uuid.uuid4().hex[:8]
-    _pending[download_id] = {
-        "url": url,
-        "title": title,
-        "user_id": user_id,
-        "lang": lang,
-    }
-
-    text = (
-        f"**{title}**\n\n"
-        f"{t('channel', lang)}: {uploader}\n"
-        f"{t('duration', lang)}: {format_duration(duration)}\n\n"
-        f"{t('choose_format', lang)}"
-    )
-    buttons = [
-        [
-            Button.inline(t("video", lang), data=f"v:{download_id}"),
-            Button.inline(t("audio", lang), data=f"a:{download_id}"),
-        ]
-    ]
-    await status.edit(text, buttons=buttons)
-
-
-# ----------------------------------------------------------------------
-# Core download + upload flow
-# ----------------------------------------------------------------------
-async def _process_download(event, download_id, media_type, quality):
-    entry = _pending.pop(download_id, {})
-    url = entry.get("url", "")
-    title = entry.get("title", "Unknown")
-    user_id = event.sender_id
-    lang = entry.get("lang", "fa")
-
-    if _active_counts.get(user_id, 0) >= MAX_CONCURRENT_DOWNLOADS:
-        await event.edit(t("already_downloading", lang))
-        return
-
-    _active_counts[user_id] = _active_counts.get(user_id, 0) + 1
-    session_id = uuid.uuid4().hex[:8]
-    status = None
-
-    try:
-        status = await event.get_message()
-        loop = asyncio.get_running_loop()
-        tracker = DownloadProgressTracker(status, loop)
-
-        if media_type == "video":
-            await status.edit(t("downloading_video", lang, quality=quality))
+        if is_audio:
             file_path = await asyncio.wait_for(
                 asyncio.to_thread(
-                    download_video, url, quality, session_id, DOWNLOAD_DIR, tracker.hook
+                    download_audio,
+                    url=url,
+                    preset="mp3_best" if choice == "a_best" else "mp3_medium",
+                    session_id=session_id,
+                    download_dir=DOWNLOAD_DIR,
+                    progress_hook=tracker.hook,
                 ),
                 timeout=DOWNLOAD_TIMEOUT,
             )
         else:
-            await status.edit(t("downloading_audio", lang))
             file_path = await asyncio.wait_for(
                 asyncio.to_thread(
-                    download_audio, url, session_id, DOWNLOAD_DIR, tracker.hook
+                    download_video,
+                    url=url,
+                    quality=quality,
+                    session_id=session_id,
+                    download_dir=DOWNLOAD_DIR,
+                    progress_hook=tracker.hook,
                 ),
                 timeout=DOWNLOAD_TIMEOUT,
             )
 
         file_size = os.path.getsize(file_path)
-
-        if file_size == 0:
-            await status.edit(t("file_empty", lang))
-            return
-
         if file_size > MAX_FILE_SIZE:
-            await status.edit(
-                t("file_too_large", lang, size=format_size(file_size),
-                  max_size=format_size(MAX_FILE_SIZE))
+            await status_msg.edit(
+                f"❌ حجم فایل ({format_size(file_size)}) بیشتر از سقف مجاز تلگرام است."
             )
-            return
+            cleanup_files(DOWNLOAD_DIR, session_id)
+            return False
 
-        await status.edit(t("uploading", lang, size=format_size(file_size)))
-        upload_tracker = UploadProgressTracker(status, file_size)
+        # 3. Upload to Telegram
+        if send_status:
+            await status_msg.edit(t("status_uploading", lang))
 
-        await asyncio.wait_for(
-            event.client.send_file(
+        upload_tracker = SimpleUploadTracker(status_msg, lang=lang)
+        caption = f"🎬 {title}" if media_type == "video" else f"🎧 {title}"
+
+        sent_msg = await asyncio.wait_for(
+            client.send_file(
                 event.chat_id,
                 file_path,
-                caption=title,
+                caption=caption,
                 progress_callback=upload_tracker.callback,
-                supports_streaming=(media_type == "video"),
+                supports_streaming=True if media_type == "video" else False,
             ),
             timeout=UPLOAD_TIMEOUT,
         )
 
-        await status.edit(t("done", lang))
+        # 4. Save to Cache & Record in DB
+        telegram_file_id = sent_msg.media
+        if video_id and telegram_file_id:
+            await asyncio.to_thread(
+                db.set_cache,
+                video_id=video_id,
+                quality=quality,
+                media_type=media_type,
+                telegram_file_id=str(telegram_file_id),
+                file_size=file_size,
+            )
 
-    except FloodWaitError as exc:
-        if status:
-            await status.edit(t("flood_wait", lang, seconds=exc.seconds))
+        rec_id = await asyncio.to_thread(
+            db.add_download,
+            user_id=user_id,
+            url=url,
+            title=title,
+            media_type=media_type,
+            quality=quality,
+            file_size=file_size,
+            status="success",
+        )
+
+        # Attach report issue button
+        try:
+            await sent_msg.edit(buttons=file_action_keyboard(rec_id, lang))
+        except Exception:
+            pass
+
+        if send_status:
+            await status_msg.edit(t("status_done", lang))
+
+        # Forward to download log channel (Section 8)
+        await _forward_to_download_log(client, sent_msg, title, event.sender)
+        return True
+
     except asyncio.TimeoutError:
-        if status:
-            await status.edit(t("timeout", lang))
-    except FileNotFoundError:
-        if status:
-            await status.edit(t("no_file", lang))
-    except Exception:
-        logger.exception("Download/upload failed")
-        if status:
-            await status.edit(t("generic_error", lang))
+        logger.error("Download or upload timed out for url=%s", url)
+        await asyncio.to_thread(db.add_error_log, user_id, url, "Operation timed out")
+        dl_retry_id = str(uuid.uuid4())[:8]
+        _pending_downloads[dl_retry_id] = {
+            "is_playlist": False,
+            "url": url,
+            "video_id": video_id,
+            "title": title,
+            "user_id": user_id,
+            "lang": lang,
+        }
+        await status_msg.edit(
+            t("download_incomplete", lang),
+            buttons=retry_keyboard(dl_retry_id, lang),
+        )
+        return False
+    except Exception as exc:
+        logger.exception("Error processing download: %s", exc)
+        await asyncio.to_thread(db.add_error_log, user_id, url, str(exc))
+        # Forward to error channel if configured
+        err_ch = await asyncio.to_thread(db.get_setting, "error_log_channel_id", "")
+        if err_ch:
+            try:
+                await client.send_message(
+                    int(err_ch) if err_ch.startswith("-") else err_ch,
+                    f"⚠️ <b>خطای غیرمنتظره در دانلود:</b>\n"
+                    f"👤 کاربر: <code>{user_id}</code>\n"
+                    f"🔗 لینک: {url}\n"
+                    f"❌ خطا: <code>{str(exc)[:200]}</code>",
+                    parse_mode="html",
+                )
+            except Exception:
+                pass
+
+        dl_retry_id = str(uuid.uuid4())[:8]
+        _pending_downloads[dl_retry_id] = {
+            "is_playlist": False,
+            "url": url,
+            "video_id": video_id,
+            "title": title,
+            "user_id": user_id,
+            "lang": lang,
+        }
+        await status_msg.edit(
+            t("download_incomplete", lang),
+            buttons=retry_keyboard(dl_retry_id, lang),
+        )
+        return False
     finally:
-        _active_counts[user_id] = max(0, _active_counts.get(user_id, 1) - 1)
-        if _active_counts.get(user_id, 0) == 0:
-            _active_counts.pop(user_id, None)
         cleanup_files(DOWNLOAD_DIR, session_id)
+
+
+async def _forward_to_download_log(client, sent_msg, title, sender):
+    """Forward sent media file to configured download log channel (Section 8)."""
+    log_ch = await asyncio.to_thread(db.get_setting, "download_log_channel_id", "")
+    if not log_ch:
+        return
+    try:
+        user_label = getattr(sender, "username", None) or getattr(sender, "id", "Unknown")
+        caption = f"{title}\n\n👤 دانلود شده توسط: @{user_label}" if str(user_label).isalnum() else f"{title}\n\n👤 دانلود شده توسط: {user_label}"
+        target = int(log_ch) if log_ch.startswith("-") else log_ch
+        await client.send_file(
+            target,
+            sent_msg.media,
+            caption=caption,
+        )
+    except Exception as exc:
+        logger.error("Could not forward download to log channel: %s", exc)

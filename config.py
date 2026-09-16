@@ -51,3 +51,23 @@ try:
     OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
 except ValueError:
     OWNER_ID = 0
+
+try:
+    MAX_PLAYLIST_ITEMS = int(os.environ.get("MAX_PLAYLIST_ITEMS", "25"))
+except ValueError:
+    MAX_PLAYLIST_ITEMS = 25
+
+try:
+    RATE_LIMIT_PER_MINUTE = int(os.environ.get("RATE_LIMIT_PER_MINUTE", "5"))
+except ValueError:
+    RATE_LIMIT_PER_MINUTE = 5
+
+try:
+    DEFAULT_DAILY_LIMIT = int(os.environ.get("DEFAULT_DAILY_LIMIT", "10"))
+except ValueError:
+    DEFAULT_DAILY_LIMIT = 10
+
+try:
+    DEFAULT_REFERRAL_BONUS = int(os.environ.get("DEFAULT_REFERRAL_BONUS", "3"))
+except ValueError:
+    DEFAULT_REFERRAL_BONUS = 3
