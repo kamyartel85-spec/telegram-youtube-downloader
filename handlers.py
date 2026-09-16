@@ -53,10 +53,10 @@ def _main_menu(lang):
     """Build the reply-keyboard for *lang*."""
     labels = menu_labels(lang)
     return [
-        [labels[0], labels[1]],
-        [labels[2], labels[3]],
-        [labels[4], labels[5]],
-        [labels[6]],
+        [Button.text(labels[0], resize=True), Button.text(labels[1])],
+        [Button.text(labels[2]), Button.text(labels[3])],
+        [Button.text(labels[4]), Button.text(labels[5])],
+        [Button.text(labels[6])],
     ]
 
 
@@ -109,6 +109,10 @@ def register_handlers(client):
     async def _menu_or_url(event):
         text = (event.raw_text or "").strip()
         user_id = event.sender_id
+
+        # Skip commands — handled by dedicated handlers
+        if text.startswith("/"):
+            return
 
         # If it's a valid YouTube URL, handle download flow
         if is_valid_youtube_url(text):
