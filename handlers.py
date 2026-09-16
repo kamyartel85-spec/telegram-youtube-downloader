@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from telethon import events, Button
 from telethon.errors import FloodWaitError
+from telethon.tl.types import DocumentAttributeVideo, DocumentAttributeAudio
 
 from config import (
     DOWNLOAD_DIR,
@@ -33,6 +34,8 @@ from youtube import (
     extract_playlist_info,
     download_video,
     download_audio,
+    prepare_thumbnail,
+    get_quality_dimensions,
 )
 from progress import SimpleStatusTracker, SimpleUploadTracker
 from i18n import t, menu_labels, LANG_LABELS, SUPPORTED_LANGS
@@ -467,6 +470,8 @@ def register_handlers(client):
                 "title": info["title"],
                 "uploader": info["uploader"],
                 "duration": info["duration"],
+                "raw_duration": info.get("raw_duration") or 0,
+                "thumbnail": info.get("thumbnail"),
                 "user_id": user_id,
                 "lang": lang,
             }
@@ -573,6 +578,9 @@ def register_handlers(client):
                 video_id=entry.get("video_id"),
                 title=entry.get("title"),
                 choice=choice,
+                raw_duration=entry.get("raw_duration", 0),
+                thumbnail_url=entry.get("thumbnail"),
+                uploader=entry.get("uploader"),
                 lang=lang,
                 send_status=True,
             )
@@ -648,6 +656,9 @@ async def _process_single_media(
     video_id,
     title,
     choice,
+    raw_duration=0,
+    thumbnail_url=None,
+    uploader="YouTube",
     lang="fa",
     send_status=True,
 ) -> bool:
@@ -738,11 +749,45 @@ async def _process_single_media(
         upload_tracker = SimpleUploadTracker(status_msg, lang=lang)
         caption = f"🎬 {title}" if media_type == "video" else f"🎧 {title}"
 
+        # Prepare thumbnail to fix black/white blank previews in Telegram
+        thumb_path = None
+        if thumbnail_url:
+            thumb_path = await asyncio.to_thread(
+                prepare_thumbnail,
+                thumb_url=thumbnail_url,
+                session_id=session_id,
+                download_dir=DOWNLOAD_DIR,
+            )
+
+        # Set explicit document attributes:
+        # Prevents the "00:00" duration bug and configures correct player dimensions & metadata
+        attributes = []
+        if media_type == "video":
+            width, height = get_quality_dimensions(quality)
+            attributes.append(
+                DocumentAttributeVideo(
+                    duration=int(raw_duration or 0),
+                    w=width,
+                    h=height,
+                    supports_streaming=True,
+                )
+            )
+        else:
+            attributes.append(
+                DocumentAttributeAudio(
+                    duration=int(raw_duration or 0),
+                    title=title or "Audio Track",
+                    performer=uploader or "YouTube",
+                )
+            )
+
         sent_msg = await asyncio.wait_for(
             client.send_file(
                 event.chat_id,
                 file_path,
                 caption=caption,
+                thumb=thumb_path,
+                attributes=attributes,
                 progress_callback=upload_tracker.callback,
                 supports_streaming=True if media_type == "video" else False,
             ),

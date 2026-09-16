@@ -136,13 +136,26 @@ def extract_playlist_info(url, max_items=25):
 
 
 def download_video(url, quality, session_id, download_dir, progress_hook=None):
-    """Download video with specified max height and return output file path."""
+    """Download video strictly matching or under target height, merging to streamable MP4."""
     outtmpl = os.path.join(download_dir, f"{session_id}.%(ext)s")
+    q = str(quality).replace("v_", "").strip()
+    
+    # Strict quality hierarchy ensuring exact resolution match:
+    # 1. Exact height with H.264 (avc1) + AAC (best for Telegram streaming & low size)
+    # 2. Exact height with any video codec + best audio
+    # 3. Best video <= height with H.264 + AAC
+    # 4. Best video <= height with any video codec + best audio
+    # 5. Pre-merged format <= height
+    # Note: Bare '/best' is intentionally omitted so 144p/360p never fall back to 720p/1080p!
     fmt = (
-        f"bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]"
-        f"/best[height<={quality}][ext=mp4]"
-        f"/best[height<={quality}]"
-        f"/best"
+        f"bestvideo[height={q}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
+        f"bestvideo[height={q}]+bestaudio/"
+        f"bestvideo[height<={q}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
+        f"bestvideo[height<={q}]+bestaudio/"
+        f"best[height<={q}][ext=mp4]/"
+        f"best[height<={q}]/"
+        f"worstvideo[height>={q}]+bestaudio/"
+        f"bestvideo[height<={q}]+bestaudio"
     )
     opts = dict(
         _BASE_OPTS,
@@ -150,6 +163,9 @@ def download_video(url, quality, session_id, download_dir, progress_hook=None):
         merge_output_format="mp4",
         outtmpl=outtmpl,
         progress_hooks=[progress_hook] if progress_hook else [],
+        postprocessor_args={
+            "ffmpeg": ["-movflags", "+faststart"],
+        },
     )
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
@@ -177,6 +193,56 @@ def download_audio(url, preset, session_id, download_dir, progress_hook=None):
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
     return _find_output_file(download_dir, session_id)
+
+
+def prepare_thumbnail(thumb_url, session_id, download_dir):
+    """Download and prepare Telegram-compliant JPEG thumbnail (max 320x320, under 200KB)."""
+    if not thumb_url:
+        return None
+    thumb_path = os.path.join(download_dir, f"{session_id}_thumb.jpg")
+    try:
+        import urllib.request
+        from PIL import Image
+
+        raw_thumb = os.path.join(download_dir, f"{session_id}_raw_thumb")
+        req = urllib.request.Request(
+            thumb_url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as response, open(raw_thumb, "wb") as f:
+            f.write(response.read())
+
+        with Image.open(raw_thumb) as img:
+            img = img.convert("RGB")
+            # Telegram accepts max 320x320 for thumbnails
+            img.thumbnail((320, 320), Image.Resampling.LANCZOS)
+            img.save(thumb_path, "JPEG", quality=85, optimize=True)
+
+        try:
+            os.remove(raw_thumb)
+        except OSError:
+            pass
+
+        if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+            return thumb_path
+    except Exception as exc:
+        logger.warning("Could not create thumbnail: %s", exc)
+    return None
+
+
+def get_quality_dimensions(quality):
+    """Return estimated width & height for Telegram DocumentAttributeVideo."""
+    try:
+        h = int(str(quality).replace("v_", "").strip())
+    except (ValueError, TypeError):
+        h = 720
+    # Standard 16:9 aspect ratio
+    w = int(round(h * 16 / 9))
+    if w % 2 != 0:
+        w += 1
+    if h % 2 != 0:
+        h += 1
+    return w, h
 
 
 def _find_output_file(download_dir, session_id):

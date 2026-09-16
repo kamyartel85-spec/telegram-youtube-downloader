@@ -7,7 +7,7 @@ import logging
 from telethon import events, Button
 
 import db
-from config import OWNER_ID
+from config import OWNER_ID, ADMIN_IDS
 from keyboards import ADMIN_BUTTONS, admin_main_keyboard, main_menu_keyboard
 from utils import format_size
 
@@ -16,9 +16,19 @@ logger = logging.getLogger(__name__)
 
 async def _is_admin(user_id):
     """Check if user_id has admin rights."""
-    if OWNER_ID and user_id == OWNER_ID:
-        return {"user_id": user_id, "role": "owner"}
-    return await asyncio.to_thread(db.get_admin, user_id)
+    if not user_id:
+        return None
+    try:
+        uid = int(user_id)
+    except (ValueError, TypeError):
+        uid = 0
+
+    if OWNER_ID and uid == OWNER_ID:
+        return {"user_id": uid, "role": "owner"}
+    if uid in ADMIN_IDS:
+        return {"user_id": uid, "role": "owner"}
+
+    return await asyncio.to_thread(db.get_admin, uid)
 
 
 def register_admin_handlers(client):
@@ -29,8 +39,21 @@ def register_admin_handlers(client):
     # ------------------------------------------------------------------
     @client.on(events.NewMessage(pattern=r"^/admin\b"))
     async def admin_entry(event):
-        admin = await _is_admin(event.sender_id)
+        sender_id = event.sender_id
+        admin = await _is_admin(sender_id)
         if not admin:
+            logger.warning(
+                f"Unauthorized /admin attempt by sender_id={sender_id} "
+                f"(Configured OWNER_ID={OWNER_ID}, ADMIN_IDS={ADMIN_IDS})"
+            )
+            await event.respond(
+                f"⛔ <b>دسترسی غیرمجاز!</b>\n\n"
+                f"شما به عنوان ادمین در ربات تعریف نشده‌اید.\n"
+                f"🆔 <b>آیدی عددی تلگرام شما:</b> <code>{sender_id}</code>\n\n"
+                f"💡 برای فعال‌سازی دسترسی مدیریت، این عدد را در بخش متغیرهای سرور (Environment Variables) به عنوان <b>OWNER_ID</b> وارد کنید و ربات را ری‌استارت نمایید:\n"
+                f"<code>OWNER_ID={sender_id}</code>",
+                parse_mode="html",
+            )
             return
 
         role = admin.get("role", "viewer")

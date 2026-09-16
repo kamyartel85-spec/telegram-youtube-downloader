@@ -47,10 +47,26 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 
 DB_PATH = os.environ.get("DB_PATH", "/tmp/ytdl_bot/bot.db")
 
-try:
-    OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
-except ValueError:
-    OWNER_ID = 0
+def _parse_id(val: str) -> int:
+    clean = val.strip().strip('"').strip("'").lstrip("@")
+    try:
+        return int(clean)
+    except (ValueError, TypeError):
+        return 0
+
+raw_owner = os.environ.get("OWNER_ID", "")
+OWNER_ID = _parse_id(raw_owner)
+
+# Support comma-separated extra admins if defined: ADMIN_IDS="123,456"
+ADMIN_IDS = set()
+if OWNER_ID:
+    ADMIN_IDS.add(OWNER_ID)
+raw_admins = os.environ.get("ADMIN_IDS", "")
+if raw_admins:
+    for item in raw_admins.split(","):
+        parsed = _parse_id(item)
+        if parsed:
+            ADMIN_IDS.add(parsed)
 
 try:
     MAX_PLAYLIST_ITEMS = int(os.environ.get("MAX_PLAYLIST_ITEMS", "25"))
