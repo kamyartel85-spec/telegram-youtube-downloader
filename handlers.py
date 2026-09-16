@@ -158,7 +158,17 @@ def register_handlers(client):
             lang = parts[1] if len(parts) > 1 else "fa"
             if lang not in SUPPORTED_LANGS:
                 lang = "fa"
-            await asyncio.to_thread(db.update_user, event.sender_id, language=lang)
+            user = await asyncio.to_thread(db.get_user, event.sender_id)
+            if user is None:
+                username = None
+                try:
+                    sender = await event.get_sender()
+                    username = getattr(sender, "username", None)
+                except Exception:
+                    pass
+                await asyncio.to_thread(db.create_user, event.sender_id, username, language=lang)
+            else:
+                await asyncio.to_thread(db.update_user, event.sender_id, language=lang)
             await event.answer()
             await event.edit(t("lang_changed", lang))
             # Send fresh welcome with main menu
